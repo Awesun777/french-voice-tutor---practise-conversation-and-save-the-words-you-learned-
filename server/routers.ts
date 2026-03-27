@@ -174,8 +174,8 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
         } else {
           // Single word — use json_schema so special chars in conjugations never break JSON parsing
           messages = [
-            { role: "system", content: "You are a precise French-English dictionary. Return only valid JSON matching the schema exactly." },
-            { role: "user", content: `Look up the French word: "${input.term}". The user may have omitted accents; return proper French WITH accents. Provide a complete dictionary entry including all conjugation tenses (present, imparfait, passeCompose, futurSimple, conditionnel, subjonctif) each as an array of exactly 6 conjugated forms (je/tu/il-elle/nous/vous/ils-elles). For reflexive verbs like se promener, include the reflexive pronoun in each conjugated form (e.g. "je me promène"). Provide 2 example sentences, 3-5 synonyms, and 1-2 confusing words. If the input is not a real French word, set found to false and leave other fields as empty strings or empty arrays.` },
+            { role: "system", content: "You are a precise French-English dictionary. Always set the \"type\" field to exactly the string \"word\". Return only valid JSON matching the schema exactly." },
+            { role: "user", content: `Look up the French word: "${input.term}". The user may have omitted accents; return proper French WITH accents. IMPORTANT: set the "type" field to exactly "word" (not "dictionaryEntry" or anything else). Provide a complete dictionary entry including all conjugation tenses (present, imparfait, passeCompose, futurSimple, conditionnel, subjonctif) each as an array of exactly 6 conjugated forms (je/tu/il-elle/nous/vous/ils-elles). For reflexive verbs like se promener, include the reflexive pronoun in each conjugated form (e.g. "je me promène"). Provide 2 example sentences, 3-5 synonyms, and 1-2 confusing words. If the input is not a real French word, set found to false and leave other fields as empty strings or empty arrays.` },
           ];
           responseFormat = {
             type: "json_schema",
@@ -185,7 +185,7 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
               schema: {
                 type: "object",
                 properties: {
-                  type: { type: "string" },
+                  type: { type: "string", enum: ["word"] },
                   found: { type: "boolean" },
                   word: { type: "string" },
                   isConjugated: { type: "boolean" },
@@ -265,7 +265,7 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
 
         const rawContent = response.choices[0].message.content ?? "{}";
         const raw = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-        let result: unknown;
+        let result: Record<string, unknown>;
         try {
           result = JSON.parse(raw);
         } catch {
@@ -275,6 +275,11 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
           } catch {
             result = { type: "error", message: "Could not parse AI response. Please try again." };
           }
+        }
+        // Normalise the type field — the AI sometimes returns its own names
+        // (e.g. "dictionaryEntry", "word_result") instead of the expected values.
+        if (result.type !== "word" && result.type !== "phrase" && result.type !== "question" && result.type !== "error") {
+          result.type = type; // fall back to the detected input type
         }
         setCache(key, result);
         return result;
