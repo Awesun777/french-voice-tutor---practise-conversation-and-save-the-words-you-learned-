@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { DictResult, DictWordResult, DictPhraseResult, DictQuestionResult } from "@/types";
-import { Volume2, Plus, Loader2, Search, ChevronDown, ChevronUp } from "lucide-react";
+import { Volume2, Plus, Loader2, Search, ChevronDown, ChevronUp, MessageCircle, Send, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { Streamdown } from "streamdown";
 
 function pronounce(text: string) {
   const u = new SpeechSynthesisUtterance(text);
@@ -23,13 +24,7 @@ function WordResult({ result, onAdd }: { result: DictWordResult; onAdd: (term: s
   const [showConfusing, setShowConfusing] = useState(false);
 
   if (!result.found) {
-    return (
-      <div className="bg-card border border-border rounded-2xl p-6 text-center">
-        <p className="text-4xl mb-3">🤷</p>
-        <p className="text-foreground font-semibold">Not found as a French word</p>
-        <p className="text-muted-foreground text-sm mt-1">Try checking your spelling or searching for a phrase.</p>
-      </div>
-    );
+    return null; // Handled by parent with suggestions UI
   }
 
   const TENSE_LABELS: Record<string, string> = {
@@ -253,42 +248,195 @@ function QuestionResult({ result }: { result: DictQuestionResult }) {
   return (
     <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
       <div>
-        <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Answer</p>
-        <p className="text-foreground">{result.answer}</p>
+        <p className="text-xs font-bold text-primary uppercase tracking-wider mb-1">Question</p>
+        <p className="text-lg font-semibold text-foreground">{result.question}</p>
+      </div>
+      <div className="bg-muted/40 rounded-xl p-4">
+        <p className="text-sm text-foreground leading-relaxed">{result.answer}</p>
       </div>
       {result.options?.length > 0 && (
-        <div>
-          <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Related expressions</p>
-          <div className="space-y-2">
-            {result.options.map((opt, i) => (
-              <div key={i} className="bg-muted/40 rounded-xl p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <button onClick={() => pronounce(opt.french)} className="p-0.5 rounded hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors">
-                    <Volume2 className="w-3 h-3" />
-                  </button>
-                  <span className="text-sm font-semibold text-foreground">{opt.french}</span>
-                  <span className="text-xs text-muted-foreground">— {opt.english}</span>
-                </div>
-                {opt.summary && <p className="text-xs text-muted-foreground ml-6">{opt.summary}</p>}
+        <div className="space-y-2">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Related expressions</p>
+          {result.options.map((opt, i) => (
+            <div key={i} className="flex items-start gap-3 bg-muted/30 rounded-xl p-3">
+              <button onClick={() => pronounce(opt.french)} className="mt-0.5 p-1 rounded-full hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors flex-shrink-0">
+                <Volume2 className="w-3 h-3" />
+              </button>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{opt.french}</p>
+                <p className="text-xs text-muted-foreground">{opt.english}</p>
+                {opt.summary && <p className="text-xs text-muted-foreground italic mt-0.5">{opt.summary}</p>}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
+// ─── Tutor Quick-Ask ──────────────────────────────────────────────────────────
+function TutorQuickAsk() {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const utils = trpc.useUtils();
+
+  const chatMutation = trpc.tutor.chat.useMutation({
+    onSuccess: (data) => {
+      setAnswer(data.reply);
+      setQuestion("");
+      utils.tutor.history.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const handleAsk = () => {
+    const q = question.trim();
+    if (!q) return;
+    setAnswer(null);
+    chatMutation.mutate({ message: q });
+  };
+
+  const QUICK_PROMPTS = [
+    "How do I conjugate avoir?",
+    "What's the difference between savoir and connaître?",
+    "When do I use passé composé vs imparfait?",
+    "How do I form the subjunctive?",
+  ];
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-muted/30 transition-colors"
+      >
+        <div className="p-1.5 rounded-lg bg-primary/15">
+          <MessageCircle className="w-3.5 h-3.5 text-primary" />
+        </div>
+        <span className="text-sm font-semibold text-foreground flex-1 text-left">Ask your French tutor</span>
+        <span className="text-xs text-muted-foreground mr-1">Quick question</span>
+        {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+      </button>
+      {expanded && (
+        <div className="border-t border-border px-4 py-3 space-y-3">
+          {/* Quick prompt chips */}
+          <div className="flex flex-wrap gap-1.5">
+            {QUICK_PROMPTS.map((p) => (
+              <button
+                key={p}
+                onClick={() => { setQuestion(p); }}
+                className="text-xs px-2.5 py-1 bg-muted/60 hover:bg-primary/15 hover:text-primary text-muted-foreground rounded-full transition-colors"
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAsk()}
+              placeholder="Ask anything about French grammar, vocabulary, or usage…"
+              className="flex-1 px-3 py-2 bg-background border border-border rounded-xl text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
+            />
+            <button
+              onClick={handleAsk}
+              disabled={!question.trim() || chatMutation.isPending}
+              className="p-2.5 bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground rounded-xl transition-colors flex-shrink-0"
+            >
+              {chatMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            </button>
+          </div>
+          {chatMutation.isPending && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Sparkles className="w-3.5 h-3.5 animate-pulse text-primary" />
+              <span>Thinking…</span>
+            </div>
+          )}
+          {answer && (
+            <div className="bg-muted/30 border border-border/50 rounded-xl p-4 text-sm prose prose-sm prose-invert max-w-none">
+              <Streamdown>{answer}</Streamdown>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Spelling Suggestions Banner ──────────────────────────────────────────────
+function SuggestionsBanner({
+  term,
+  suggestions,
+  onSearch,
+}: {
+  term: string;
+  suggestions: { term: string; translation: string; confidence: string }[];
+  onSearch: (t: string) => void;
+}) {
+  if (!suggestions.length) return null;
+  return (
+    <div className="bg-amber-950/40 border border-amber-700/40 rounded-2xl p-4">
+      <div className="flex items-start gap-2 mb-3">
+        <Sparkles className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-amber-300">
+            "{term}" wasn't found — did you mean:
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {suggestions.map((s) => (
+          <button
+            key={s.term}
+            onClick={() => onSearch(s.term)}
+            className="flex items-center gap-2 px-3 py-2 bg-amber-900/40 hover:bg-amber-800/50 border border-amber-700/40 rounded-xl transition-colors group"
+          >
+            <div className="text-left">
+              <p className="text-sm font-bold text-amber-200 group-hover:text-amber-100">{s.term}</p>
+              <p className="text-xs text-amber-400/80">{s.translation}</p>
+            </div>
+            <div className={cn(
+              "text-xs px-1.5 py-0.5 rounded-full font-semibold ml-1",
+              s.confidence === "high" ? "bg-emerald-900/60 text-emerald-400" : "bg-amber-900/60 text-amber-400"
+            )}>
+              {s.confidence}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main DictionaryTab ───────────────────────────────────────────────────────
 export default function DictionaryTab() {
   const [searchTerm, setSearchTerm] = useState("");
   const [results, setResults] = useState<DictResult[]>([]);
   const [history, setHistory] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<{ term: string; translation: string; confidence: string }[]>([]);
+  const [lastNotFoundTerm, setLastNotFoundTerm] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
 
+  const suggestMutation = trpc.dictionary.suggest.useMutation({
+    onSuccess: (data) => setSuggestions(data.suggestions),
+  });
+
   const searchMutation = trpc.dictionary.search.useMutation({
     onSuccess: (data) => {
-      setResults((prev) => [data as DictResult, ...prev.slice(0, 9)]);
+      const result = data as DictResult;
+      // If word not found, trigger suggestions in parallel
+      if (result.type === "word" && !(result as DictWordResult).found) {
+        setSuggestions([]);
+        suggestMutation.mutate({ term: searchTerm.trim() });
+        setLastNotFoundTerm(searchTerm.trim());
+      } else {
+        setSuggestions([]);
+        setLastNotFoundTerm("");
+      }
+      setResults((prev) => [result, ...prev.slice(0, 9)]);
     },
     onError: (err) => toast.error(err.message),
   });
@@ -301,9 +449,12 @@ export default function DictionaryTab() {
     onError: () => toast.error("Failed to add word"),
   });
 
-  const handleSearch = useCallback(() => {
-    const term = searchTerm.trim();
+  const handleSearch = useCallback((overrideTerm?: string) => {
+    const term = (overrideTerm ?? searchTerm).trim();
     if (!term) return;
+    if (overrideTerm) setSearchTerm(overrideTerm);
+    setSuggestions([]);
+    setLastNotFoundTerm("");
     if (!history.includes(term)) setHistory((prev) => [term, ...prev.slice(0, 19)]);
     searchMutation.mutate({ term });
   }, [searchTerm, history, searchMutation]);
@@ -330,7 +481,7 @@ export default function DictionaryTab() {
               />
             </div>
             <button
-              onClick={handleSearch}
+              onClick={() => handleSearch()}
               disabled={searchMutation.isPending || !searchTerm.trim()}
               className="px-4 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground rounded-xl text-sm font-semibold transition-colors flex items-center gap-2"
             >
@@ -343,7 +494,7 @@ export default function DictionaryTab() {
               {history.slice(0, 8).map((h) => (
                 <button
                   key={h}
-                  onClick={() => { setSearchTerm(h); searchMutation.mutate({ term: h }); }}
+                  onClick={() => handleSearch(h)}
                   className="flex-shrink-0 px-2.5 py-1 bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground rounded-full text-xs transition-colors"
                 >
                   {h}
@@ -357,13 +508,21 @@ export default function DictionaryTab() {
       {/* Results */}
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <div className="max-w-2xl mx-auto space-y-4">
+
+          {/* Empty state */}
           {results.length === 0 && !searchMutation.isPending && (
-            <div className="text-center py-20">
-              <p className="text-5xl mb-4">🔍</p>
-              <p className="text-lg font-semibold text-foreground mb-2">Search the French dictionary</p>
-              <p className="text-sm text-muted-foreground">Type a word, phrase, or question like "how do I say hello?"</p>
-            </div>
+            <>
+              <div className="text-center py-12">
+                <p className="text-5xl mb-4">🔍</p>
+                <p className="text-lg font-semibold text-foreground mb-2">Search the French dictionary</p>
+                <p className="text-sm text-muted-foreground">Type a word, phrase, or question like "how do I say hello?"</p>
+              </div>
+              {/* Tutor quick-ask shown prominently on empty state */}
+              <TutorQuickAsk />
+            </>
           )}
+
+          {/* Loading */}
           {searchMutation.isPending && (
             <div className="flex items-center justify-center py-16">
               <div className="flex flex-col items-center gap-3">
@@ -372,9 +531,38 @@ export default function DictionaryTab() {
               </div>
             </div>
           )}
+
+          {/* Spelling suggestions banner — shown when word not found */}
+          {lastNotFoundTerm && (
+            <div className="space-y-3">
+              {/* Not found card */}
+              <div className="bg-card border border-border rounded-2xl p-5 text-center">
+                <p className="text-3xl mb-2">🤷</p>
+                <p className="text-foreground font-semibold">"{lastNotFoundTerm}" wasn't found</p>
+                <p className="text-muted-foreground text-sm mt-1">This doesn't appear to be a French word or phrase.</p>
+              </div>
+              {/* Suggestions */}
+              {suggestMutation.isPending ? (
+                <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 rounded-xl text-sm text-muted-foreground">
+                  <Sparkles className="w-4 h-4 animate-pulse text-primary" />
+                  <span>Looking for similar words…</span>
+                </div>
+              ) : (
+                <SuggestionsBanner
+                  term={lastNotFoundTerm}
+                  suggestions={suggestions}
+                  onSearch={handleSearch}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Results list */}
           {results.map((result, i) => (
             <div key={i}>
-              {result.type === "word" && <WordResult result={result as DictWordResult} onAdd={handleAdd} />}
+              {result.type === "word" && (result as DictWordResult).found && (
+                <WordResult result={result as DictWordResult} onAdd={handleAdd} />
+              )}
               {result.type === "phrase" && <PhraseResult result={result as DictPhraseResult} onAdd={handleAdd} />}
               {result.type === "question" && <QuestionResult result={result as DictQuestionResult} />}
               {result.type === "error" && (
@@ -384,6 +572,11 @@ export default function DictionaryTab() {
               )}
             </div>
           ))}
+
+          {/* Tutor quick-ask at bottom when results exist */}
+          {results.length > 0 && !searchMutation.isPending && (
+            <TutorQuickAsk />
+          )}
         </div>
       </div>
     </div>

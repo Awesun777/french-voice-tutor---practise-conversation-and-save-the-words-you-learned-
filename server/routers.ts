@@ -63,6 +63,31 @@ export const appRouter = router({
 
   // ─── Dictionary ─────────────────────────────────────────────────────────────
   dictionary: router({
+    suggest: protectedProcedure
+      .input(z.object({ term: z.string().min(1).max(200) }))
+      .mutation(async ({ input }) => {
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "user",
+              content: `The user searched for "${input.term}" in a French-English dictionary but it was not found or appears misspelled.
+Suggest 1-2 real French words or phrases that the user most likely intended.
+Return ONLY this JSON:
+{"suggestions":[{"term":"correct French word/phrase WITH accents","translation":"English meaning","confidence":"high|medium"},{"term":"...","translation":"...","confidence":"..."}]}
+If no plausible suggestion exists, return {"suggestions":[]}.`,
+            },
+          ],
+          response_format: { type: "json_object" } as any,
+        });
+        const raw = response.choices[0].message.content ?? '{"suggestions":[]}';
+        const str = typeof raw === 'string' ? raw : JSON.stringify(raw);
+        try {
+          const parsed = JSON.parse(str);
+          return { suggestions: (parsed.suggestions ?? []).slice(0, 2) as { term: string; translation: string; confidence: string }[] };
+        } catch {
+          return { suggestions: [] };
+        }
+      }),
     search: protectedProcedure
       .input(z.object({ term: z.string().min(1).max(300) }))
       .mutation(async ({ input }) => {
@@ -345,6 +370,99 @@ ${correctedText.slice(0, 8000)}`;
         return { items: deduped, corrections };
       }),
 
+    extractFromGoogleDoc: protectedProcedure
+      .input(
+        z.object({
+          url: z.string().url(),
+          instructions: z.string().max(500).optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        // Parse the Google Docs document ID from the URL
+        const docIdMatch = input.url.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+        if (!docIdMatch) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid Google Docs URL. Please share a link like: https://docs.google.com/document/d/..." });
+        }
+        const docId = docIdMatch[1];
+        // Use the public export endpoint to get plain text
+        const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+        let docText: string;
+        try {
+          const resp = await fetch(exportUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; FrenchDictBot/1.0)" },
+            redirect: "follow",
+          });
+          if (!resp.ok) {
+            if (resp.status === 403 || resp.status === 401) {
+              throw new TRPCError({
+                code: "FORBIDDEN",
+                message: "Cannot access this document. Please make sure it is shared as 'Anyone with the link can view'.",
+              });
+            }
+            throw new TRPCError({ code: "BAD_REQUEST", message: `Failed to fetch document (HTTP ${resp.status}). Make sure the document is publicly shared.` });
+          }
+          docText = await resp.text();
+          if (!docText.trim()) throw new TRPCError({ code: "BAD_REQUEST", message: "The document appears to be empty." });
+        } catch (err) {
+          if (err instanceof TRPCError) throw err;
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to fetch the Google Doc. Check the URL and sharing settings." });
+        }
+        // Reuse the same extraction logic as extractFromText
+        const cacheKey = "gdoc:" + docId + (input.instructions ?? "");
+        if (importCache.has(cacheKey)) return { items: importCache.get(cacheKey)!, corrections: [], docPreview: docText.slice(0, 300) };
+        // Typo correction
+        let correctedText = docText;
+        let corrections: { original: string; fixed: string; note: string }[] = [];
+        try {
+          const corrResp = await invokeLLM({
+            messages: [{
+              role: "user",
+              content: `You are a French language proofreader. Correct typos, wrong accents, and clear grammar mistakes in the French text below. Keep structure and non-French parts EXACTLY the same. Return ONLY this JSON:
+{"corrected":"full corrected text","corrections":[{"original":"bonjure","fixed":"bonjour","note":"spelling"}]}
+Text:
+${docText.slice(0, 8000)}`,
+            }],
+            response_format: { type: "json_object" } as any,
+          });
+          const corrRaw = corrResp.choices[0].message.content ?? "{}";
+          const corrStr = typeof corrRaw === 'string' ? corrRaw : JSON.stringify(corrRaw);
+          const parsed = JSON.parse(corrStr);
+          if (parsed.corrected) correctedText = parsed.corrected;
+          if (Array.isArray(parsed.corrections)) corrections = parsed.corrections;
+        } catch { /* non-fatal */ }
+        // Extract vocabulary
+        const extraRules = input.instructions?.trim() ? `\nAdditional instructions: ${input.instructions.trim()}\n` : "";
+        const extractPrompt = `You are a French language teacher's assistant. Extract all distinct French vocabulary words and phrases from the text below.
+Ignore headings, titles, page numbers, dates, and purely English metadata.
+Focus only on French words, expressions, and sentences a student would want to learn.
+${extraRules}
+Rules:
+- "term": French word or phrase WITH accents preserved
+- "translation": English meaning, brief (1-6 words)
+- "kind": "word" for single words or 2-word expressions; "phrase" for 3+ word expressions or full sentences
+Return ONLY a complete valid JSON array.
+Text:
+${correctedText.slice(0, 8000)}`;
+        const extractResp = await invokeLLM({
+          messages: [{ role: "user", content: extractPrompt }],
+          response_format: { type: "json_array" } as any,
+        });
+        let items: { term: string; translation: string; kind: string }[] = [];
+        try {
+          const extractRaw = extractResp.choices[0].message.content ?? '[]';
+          const extractStr = typeof extractRaw === 'string' ? extractRaw : JSON.stringify(extractRaw);
+          const parsed = JSON.parse(extractStr.trim().replace(/^```json\n?|```\n?$/g, ""));
+          items = Array.isArray(parsed) ? parsed : (parsed.items ?? parsed.vocabulary ?? []);
+        } catch { items = []; }
+        const seen = new Set<string>();
+        const deduped = items.filter((item) => {
+          const k = (item.term ?? "").toLowerCase().trim();
+          if (!k || seen.has(k)) return false;
+          seen.add(k); return true;
+        });
+        importCache.set(cacheKey, deduped);
+        return { items: deduped, corrections, docPreview: docText.slice(0, 300) };
+      }),
     quickTranslate: protectedProcedure
       .input(z.object({ term: z.string().min(1).max(200) }))
       .mutation(async ({ input }) => {

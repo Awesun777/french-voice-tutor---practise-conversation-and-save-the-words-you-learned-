@@ -77,3 +77,11 @@
 - [x] Vitest: auth logout (already exists)
 - [x] Vitest: storage upload procedure
 - [x] Vitest: progress stats procedure
+
+## Improvements (Round 2)
+- [x] Move tutor quick-search bar into Dictionary tab (below main search)
+- [x] Spelling suggestions: when word not found / misspelled, suggest 1-2 likely words with "Did you mean?" UI
+- [x] Backend: spelling suggestion procedure (AI-powered)
+- [x] Import modal: add Google Docs URL import mode (fetch doc content via Google Docs export URL)
+- [x] Import modal: after extraction, offer "Save all at once" vs "Confirm one by one" flow
+- [x] Import modal: confirmation flow shows each word card with keep/skip/edit before saving
