@@ -85,3 +85,6 @@
 - [x] Import modal: add Google Docs URL import mode (fetch doc content via Google Docs export URL)
 - [x] Import modal: after extraction, offer "Save all at once" vs "Confirm one by one" flow
 - [x] Import modal: confirmation flow shows each word card with keep/skip/edit before saving
+
+## Bug Fixes
+- [x] Fix "Could not parse AI response" error on dictionary search for reflexive/irregular verbs like "promener"

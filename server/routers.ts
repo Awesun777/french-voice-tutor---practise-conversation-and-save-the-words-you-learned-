@@ -96,29 +96,171 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
         if (cached) return cached;
 
         const type = detectInputType(input.term);
-        let prompt = "";
+
+        // Build messages + structured response_format per input type
+        let messages: { role: "system" | "user"; content: string }[];
+        let responseFormat: unknown;
 
         if (type === "question") {
-          prompt = `French-English assistant. User question: "${input.term}". 
-Provide JSON with type:"question", question (string), answer (string, detailed), and options array of 3 items each with {french, english, summary}.
-Return ONLY valid JSON, no markdown.`;
+          messages = [
+            { role: "system", content: "You are a helpful French-English language assistant. Return only valid JSON." },
+            { role: "user", content: `Answer this French language question: "${input.term}". Return JSON with these exact keys: type (string, always "question"), question (string, restate the question clearly), answer (string, detailed helpful answer), options (array of 3 objects each with keys: french, english, summary).` },
+          ];
+          responseFormat = {
+            type: "json_schema",
+            json_schema: {
+              name: "question_result",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  type: { type: "string" },
+                  question: { type: "string" },
+                  answer: { type: "string" },
+                  options: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        french: { type: "string" },
+                        english: { type: "string" },
+                        summary: { type: "string" },
+                      },
+                      required: ["french", "english", "summary"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ["type", "question", "answer", "options"],
+                additionalProperties: false,
+              },
+            },
+          };
         } else if (type === "phrase") {
-          prompt = `French-English dictionary for phrase: "${input.term}".
-Provide JSON: {"type":"phrase","phrase":"WITH accents","translation":"English","pronunciation":"phonetic","literalTranslation":"word-by-word","examples":[{"fr":"...","en":"..."},{"fr":"...","en":"..."}],"usage":"usage notes","found":true}
-Return ONLY valid JSON, no markdown.`;
+          messages = [
+            { role: "system", content: "You are a precise French-English dictionary. Return only valid JSON." },
+            { role: "user", content: `Look up this French phrase: "${input.term}". The user may have omitted accents; return proper French WITH accents. Provide a complete dictionary entry.` },
+          ];
+          responseFormat = {
+            type: "json_schema",
+            json_schema: {
+              name: "phrase_result",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  type: { type: "string" },
+                  found: { type: "boolean" },
+                  phrase: { type: "string" },
+                  translation: { type: "string" },
+                  pronunciation: { type: "string" },
+                  literalTranslation: { type: "string" },
+                  usage: { type: "string" },
+                  examples: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: { fr: { type: "string" }, en: { type: "string" } },
+                      required: ["fr", "en"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ["type", "found", "phrase", "translation", "pronunciation", "literalTranslation", "usage", "examples"],
+                additionalProperties: false,
+              },
+            },
+          };
         } else {
-          prompt = `French-English dictionary for: "${input.term}". User may omit accents; return proper French WITH accents.
-Return ONLY this JSON (no markdown):
-{"type":"word","found":true,"word":"WITH accents","isConjugated":false,"conjugationInfo":null,"baseForm":"infinitive WITH accents","formExplanation":null,"translation":"English","pronunciation":"phonetic","wordType":"noun/verb/adj/adv/etc","isReflexive":false,"reflexiveType":null,"reflexiveExplanation":null,"hasReflexiveForm":false,"usesDePreposition":false,"dePrepositionExplanation":null,"reflexiveForm":null,"nonReflexiveForm":null,"examples":[{"fr":"sentence","en":"translation"},{"fr":"sentence","en":"translation"}],"conjugations":{"present":["je...","tu...","il/elle...","nous...","vous...","ils/elles..."],"imparfait":["je...","tu...","il/elle...","nous...","vous...","ils/elles..."],"passeCompose":["j'ai/je suis...","tu as/es...","il/elle a/est...","nous avons/sommes...","vous avez/êtes...","ils/elles ont/sont..."],"futurSimple":["je...","tu...","il/elle...","nous...","vous...","ils/elles..."],"conditionnel":["je...","tu...","il/elle...","nous...","vous...","ils/elles..."],"subjonctif":["que je...","que tu...","qu'il/elle...","que nous...","que vous...","qu'ils/elles..."]},"synonyms":[{"word":"WITH accents","meaning":"brief"}],"confusingWords":[{"word":"WITH accents","meaning":"brief","difference":"how it differs"}],"grammar":"brief grammar notes"}
-RULES: Always 2 examples. 3-5 synonyms. 1-2 confusing words. All 6 conjugation tenses as arrays of 6 strings. found:false if not a French word/phrase.`;
+          // Single word — use json_schema so special chars in conjugations never break JSON parsing
+          messages = [
+            { role: "system", content: "You are a precise French-English dictionary. Return only valid JSON matching the schema exactly." },
+            { role: "user", content: `Look up the French word: "${input.term}". The user may have omitted accents; return proper French WITH accents. Provide a complete dictionary entry including all conjugation tenses (present, imparfait, passeCompose, futurSimple, conditionnel, subjonctif) each as an array of exactly 6 conjugated forms (je/tu/il-elle/nous/vous/ils-elles). For reflexive verbs like se promener, include the reflexive pronoun in each conjugated form (e.g. "je me promène"). Provide 2 example sentences, 3-5 synonyms, and 1-2 confusing words. If the input is not a real French word, set found to false and leave other fields as empty strings or empty arrays.` },
+          ];
+          responseFormat = {
+            type: "json_schema",
+            json_schema: {
+              name: "word_result",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  type: { type: "string" },
+                  found: { type: "boolean" },
+                  word: { type: "string" },
+                  isConjugated: { type: "boolean" },
+                  conjugationInfo: { type: "string" },
+                  baseForm: { type: "string" },
+                  formExplanation: { type: "string" },
+                  translation: { type: "string" },
+                  pronunciation: { type: "string" },
+                  wordType: { type: "string" },
+                  isReflexive: { type: "boolean" },
+                  reflexiveType: { type: "string" },
+                  reflexiveExplanation: { type: "string" },
+                  hasReflexiveForm: { type: "boolean" },
+                  usesDePreposition: { type: "boolean" },
+                  dePrepositionExplanation: { type: "string" },
+                  reflexiveForm: { type: "string" },
+                  nonReflexiveForm: { type: "string" },
+                  grammar: { type: "string" },
+                  examples: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: { fr: { type: "string" }, en: { type: "string" } },
+                      required: ["fr", "en"],
+                      additionalProperties: false,
+                    },
+                  },
+                  conjugations: {
+                    type: "object",
+                    properties: {
+                      present:      { type: "array", items: { type: "string" } },
+                      imparfait:    { type: "array", items: { type: "string" } },
+                      passeCompose: { type: "array", items: { type: "string" } },
+                      futurSimple:  { type: "array", items: { type: "string" } },
+                      conditionnel: { type: "array", items: { type: "string" } },
+                      subjonctif:   { type: "array", items: { type: "string" } },
+                    },
+                    required: ["present", "imparfait", "passeCompose", "futurSimple", "conditionnel", "subjonctif"],
+                    additionalProperties: false,
+                  },
+                  synonyms: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: { word: { type: "string" }, meaning: { type: "string" } },
+                      required: ["word", "meaning"],
+                      additionalProperties: false,
+                    },
+                  },
+                  confusingWords: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: { word: { type: "string" }, meaning: { type: "string" }, difference: { type: "string" } },
+                      required: ["word", "meaning", "difference"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: [
+                  "type", "found", "word", "isConjugated", "conjugationInfo", "baseForm",
+                  "formExplanation", "translation", "pronunciation", "wordType",
+                  "isReflexive", "reflexiveType", "reflexiveExplanation", "hasReflexiveForm",
+                  "usesDePreposition", "dePrepositionExplanation", "reflexiveForm", "nonReflexiveForm",
+                  "grammar", "examples", "conjugations", "synonyms", "confusingWords",
+                ],
+                additionalProperties: false,
+              },
+            },
+          };
         }
 
         const response = await invokeLLM({
-          messages: [
-            { role: "system", content: "You are a precise French-English dictionary. Always return valid JSON only." },
-            { role: "user", content: prompt },
-          ],
-          response_format: { type: "json_object" } as any,
+          messages,
+          response_format: responseFormat as any,
         });
 
         const rawContent = response.choices[0].message.content ?? "{}";
@@ -127,7 +269,12 @@ RULES: Always 2 examples. 3-5 synonyms. 1-2 confusing words. All 6 conjugation t
         try {
           result = JSON.parse(raw);
         } catch {
-          result = { type: "error", message: "Could not parse AI response" };
+          // Last-resort: strip markdown fences and retry
+          try {
+            result = JSON.parse(raw.trim().replace(/^```json\n?|```\n?$/g, ""));
+          } catch {
+            result = { type: "error", message: "Could not parse AI response. Please try again." };
+          }
         }
         setCache(key, result);
         return result;
