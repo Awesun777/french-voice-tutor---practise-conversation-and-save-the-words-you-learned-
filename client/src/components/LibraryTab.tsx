@@ -1,17 +1,26 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { VocabEntry, SidebarTab, ImportItem } from "@/types";
-import { Star, Trash2, Search, Download, Upload, Loader2, X } from "lucide-react";
+import { Star, Trash2, Search, Download, Upload, Loader2, ChevronDown, ChevronRight, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import ImportModal from "./ImportModal";
 
 function todayKey() { return new Date().toISOString().split("T")[0]; }
 function yesterdayKey() { return new Date(Date.now() - 86400000).toISOString().split("T")[0]; }
+
+/** Format a dateKey (YYYY-MM-DD) or a custom label string for display */
 function fmtDateLabel(dateKey: string) {
-  if (dateKey === todayKey()) return "Today";
-  if (dateKey === yesterdayKey()) return "Yesterday";
-  return new Date(dateKey + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  // If it looks like a YYYY-MM-DD date, format it nicely
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    if (dateKey === todayKey()) return "Today";
+    if (dateKey === yesterdayKey()) return "Yesterday";
+    return new Date(dateKey + "T12:00:00").toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric",
+    });
+  }
+  // Custom label — show as-is
+  return dateKey;
 }
 
 function isDue(w: VocabEntry) {
@@ -31,24 +40,118 @@ function exportCSV(words: VocabEntry[]) {
   const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = "french_vocabulary.csv";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = "french_vocabulary.csv";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
+// ─── Group header with collapse + rename ──────────────────────────────────────
+function GroupHeader({
+  dateKey,
+  wordCount,
+  dueCount,
+  isOpen,
+  onToggle,
+  onRename,
+}: {
+  dateKey: string;
+  wordCount: number;
+  dueCount: number;
+  isOpen: boolean;
+  onToggle: () => void;
+  onRename: (oldKey: string, newKey: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(fmtDateLabel(dateKey));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(fmtDateLabel(dateKey));
+      setTimeout(() => inputRef.current?.select(), 50);
+    }
+  }, [editing, dateKey]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === fmtDateLabel(dateKey)) { setEditing(false); return; }
+    // If the new name looks like a date, normalise it; otherwise use as custom label
+    onRename(dateKey, trimmed);
+    setEditing(false);
+  };
+
+  const cancel = () => { setEditing(false); setDraft(fmtDateLabel(dateKey)); };
+
+  return (
+    <div
+      className="px-4 py-3 border-b border-border flex items-center gap-2 group/header"
+      onClick={(e) => { if (!editing) { e.stopPropagation(); onToggle(); } }}
+    >
+      {/* Collapse toggle */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggle(); }}
+        className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+      >
+        {isOpen
+          ? <ChevronDown className="w-3.5 h-3.5" />
+          : <ChevronRight className="w-3.5 h-3.5" />}
+      </button>
+
+      {/* Label / edit input */}
+      {editing ? (
+        <div className="flex-1 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") cancel(); }}
+            className="flex-1 text-xs font-bold uppercase tracking-wider bg-muted/60 border border-primary/50 rounded-lg px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            placeholder="Group name or YYYY-MM-DD"
+          />
+          <button onClick={commit} className="p-1 rounded-md text-emerald-400 hover:bg-emerald-500/10 transition-colors flex-shrink-0">
+            <Check className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={cancel} className="p-1 rounded-md text-muted-foreground hover:bg-muted transition-colors flex-shrink-0">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="flex-1 text-xs font-bold text-muted-foreground uppercase tracking-wider cursor-pointer select-none">
+            {fmtDateLabel(dateKey)}
+          </p>
+          <button
+            onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/header:opacity-100 flex-shrink-0"
+            title="Rename group"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+        </>
+      )}
+
+      <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+        {dueCount > 0 && (
+          <span className="text-xs px-1.5 py-0.5 rounded-full bg-accent/20 text-accent font-semibold">{dueCount} due</span>
+        )}
+        <p className="text-xs text-muted-foreground">{wordCount} items</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: SidebarTab) => void }) {
   const [search, setSearch] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [filterStarred, setFilterStarred] = useState(false);
+  // Track which groups are collapsed; default: all open
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const utils = trpc.useUtils();
 
   const { data: words = [], isLoading } = trpc.vocab.list.useQuery();
 
   const deleteMutation = trpc.vocab.delete.useMutation({
-    onSuccess: () => { utils.vocab.list.invalidate(); toast.success("Removed"); },
     onError: () => toast.error("Failed to delete"),
   });
 
@@ -63,6 +166,32 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
     },
     onError: (_err, _vars, ctx) => { if (ctx?.prev) utils.vocab.list.setData(undefined, ctx.prev); },
     onSettled: () => utils.vocab.list.invalidate(),
+  });
+
+  const renameGroupMutation = trpc.vocab.renameGroup.useMutation({
+    onMutate: async ({ oldDateKey, newDateKey }) => {
+      await utils.vocab.list.cancel();
+      const prev = utils.vocab.list.getData();
+      // Optimistically update all words in the old group
+      utils.vocab.list.setData(undefined, (old) =>
+        old?.map((w) => w.dateKey === oldDateKey ? { ...w, dateKey: newDateKey } : w)
+      );
+      // Update collapsed state to track new key
+      setCollapsed((c) => {
+        const next = new Set(c);
+        if (next.has(oldDateKey)) { next.delete(oldDateKey); next.add(newDateKey); }
+        return next;
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.vocab.list.setData(undefined, ctx.prev);
+      toast.error("Failed to rename group");
+    },
+    onSuccess: () => {
+      utils.vocab.list.invalidate();
+      toast.success("Group renamed");
+    },
   });
 
   const bulkAddMutation = trpc.vocab.bulkAdd.useMutation({
@@ -80,14 +209,12 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
         translation: item.translation,
         entryKind: (item.kind ?? item.entryKind ?? "word") as "word" | "phrase",
         lessonSource: lessonName || undefined,
-        // Preserve dateKey from AI-detected date headers; fall back to today
         dateKey: item.dateKey ?? todayKey(),
       }))
     );
   };
 
   const handleDelete = (id: number) => {
-    // Optimistic one-click delete — remove immediately, restore on error
     const prev = utils.vocab.list.getData();
     utils.vocab.list.setData(undefined, (old) => old?.filter((w) => w.id !== id));
     deleteMutation.mutate(
@@ -99,6 +226,19 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
         },
       }
     );
+  };
+
+  const toggleCollapse = (key: string) => {
+    setCollapsed((c) => {
+      const next = new Set(c);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const handleRename = (oldKey: string, newKey: string) => {
+    if (oldKey === newKey) return;
+    renameGroupMutation.mutate({ oldDateKey: oldKey, newDateKey: newKey });
   };
 
   // Filter and group
@@ -115,6 +255,16 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
     acc[key].push(w);
     return acc;
   }, {});
+
+  // Sort groups newest-first (YYYY-MM-DD sorts lexicographically; custom labels go last)
+  const sortedGroups = Object.entries(grouped).sort(([a], [b]) => {
+    const aIsDate = /^\d{4}-\d{2}-\d{2}$/.test(a);
+    const bIsDate = /^\d{4}-\d{2}-\d{2}$/.test(b);
+    if (aIsDate && bIsDate) return b.localeCompare(a);
+    if (aIsDate) return -1;
+    if (bIsDate) return 1;
+    return a.localeCompare(b);
+  });
 
   const dueCount = words.filter((w) => isDue(w)).length;
 
@@ -188,58 +338,94 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
             <p className="text-muted-foreground text-sm">No words match your search</p>
           </div>
         ) : (
-          <div className="max-w-2xl mx-auto space-y-4">
-            <p className="text-xs text-muted-foreground">{filtered.length} of {words.length} words</p>
-            {Object.entries(grouped)
-              .sort(([a], [b]) => b.localeCompare(a))
-              .map(([dateKey, dayWords]) => (
+          <div className="max-w-2xl mx-auto space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">{filtered.length} of {words.length} words</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCollapsed(new Set(sortedGroups.map(([k]) => k)))}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Collapse all
+                </button>
+                <span className="text-muted-foreground/40">·</span>
+                <button
+                  onClick={() => setCollapsed(new Set())}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Expand all
+                </button>
+              </div>
+            </div>
+
+            {sortedGroups.map(([dateKey, dayWords]) => {
+              const isOpen = !collapsed.has(dateKey);
+              const groupDue = dayWords.filter(isDue).length;
+              return (
                 <div key={dateKey} className="bg-card border border-border rounded-2xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{fmtDateLabel(dateKey)}</p>
-                    <p className="text-xs text-muted-foreground">{dayWords.length} items</p>
-                  </div>
-                  <div className="divide-y divide-border/50">
-                    {dayWords.map((w) => (
-                      <div key={w.id} className="flex items-center gap-2 px-4 py-3 hover:bg-muted/20 transition-colors group">
-                        <span className={cn(
-                          "text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0",
-                          w.entryKind === "phrase" ? "bg-violet-500/15 text-violet-400" : "bg-primary/15 text-primary"
-                        )}>
-                          {w.entryKind === "phrase" ? "📝" : "📖"}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-foreground truncate">{w.term}</p>
-                          <p className="text-xs text-muted-foreground truncate">{w.translation}</p>
-                          {w.lessonSource && (
-                            <p className="text-xs text-primary/70 truncate mt-0.5">📌 {w.lessonSource}</p>
-                          )}
-                        </div>
-                        {isDue(w) && (
-                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-accent/20 text-accent font-semibold flex-shrink-0">due</span>
-                        )}
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button
-                            onClick={() => starMutation.mutate({ id: w.id })}
-                            className={cn(
-                              "p-1.5 rounded-lg transition-colors",
-                              w.starred ? "text-accent" : "text-muted-foreground hover:text-accent opacity-0 group-hover:opacity-100"
+                  <GroupHeader
+                    dateKey={dateKey}
+                    wordCount={dayWords.length}
+                    dueCount={groupDue}
+                    isOpen={isOpen}
+                    onToggle={() => toggleCollapse(dateKey)}
+                    onRename={handleRename}
+                  />
+
+                  {isOpen && (
+                    <div className="divide-y divide-border/50">
+                      {dayWords.map((w) => (
+                        <div
+                          key={w.id}
+                          className="flex items-center gap-2 px-4 py-3 hover:bg-muted/20 transition-colors group"
+                        >
+                          <span className={cn(
+                            "text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0",
+                            w.entryKind === "phrase"
+                              ? "bg-violet-500/15 text-violet-400"
+                              : "bg-primary/15 text-primary"
+                          )}>
+                            {w.entryKind === "phrase" ? "📝" : "📖"}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-foreground truncate">{w.term}</p>
+                            <p className="text-xs text-muted-foreground truncate">{w.translation}</p>
+                            {w.lessonSource && (
+                              <p className="text-xs text-primary/70 truncate mt-0.5">📌 {w.lessonSource}</p>
                             )}
-                          >
-                            <Star className={cn("w-3.5 h-3.5", w.starred && "fill-current")} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(w.id)}
-                            className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
-                            title="Delete word"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          </div>
+                          {isDue(w) && (
+                            <span className="text-xs px-1.5 py-0.5 rounded-full bg-accent/20 text-accent font-semibold flex-shrink-0">
+                              due
+                            </span>
+                          )}
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              onClick={() => starMutation.mutate({ id: w.id })}
+                              className={cn(
+                                "p-1.5 rounded-lg transition-colors",
+                                w.starred
+                                  ? "text-accent"
+                                  : "text-muted-foreground hover:text-accent opacity-0 group-hover:opacity-100"
+                              )}
+                            >
+                              <Star className={cn("w-3.5 h-3.5", w.starred && "fill-current")} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(w.id)}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
+                              title="Delete word"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+              );
+            })}
           </div>
         )}
       </div>

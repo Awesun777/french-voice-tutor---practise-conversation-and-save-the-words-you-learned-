@@ -20,6 +20,7 @@ import {
   saveTutorMessage,
   toggleVocabStar,
   updateVocabEntry,
+  renameVocabGroup,
 } from "./db";
 
 // ─── Dictionary search cache (in-memory, server-side) ─────────────────────────
@@ -378,6 +379,17 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
             })
           )
         );
+        return { success: true };
+      }),
+    renameGroup: protectedProcedure
+      .input(
+        z.object({
+          oldDateKey: z.string(),
+          newDateKey: z.string(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        await renameVocabGroup(ctx.user.id, input.oldDateKey, input.newDateKey);
         return { success: true };
       }),
   }),

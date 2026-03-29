@@ -142,6 +142,18 @@ export async function updateVocabEntry(
     .where(and(eq(vocabEntries.id, id), eq(vocabEntries.userId, userId)));
 }
 
+export async function renameVocabGroup(
+  userId: number,
+  oldDateKey: string,
+  newDateKey: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(vocabEntries)
+    .set({ dateKey: newDateKey })
+    .where(and(eq(vocabEntries.userId, userId), eq(vocabEntries.dateKey, oldDateKey)));
+}
 export async function deleteVocabEntry(userId: number, id: number): Promise<void> {
   const db = await getDb();
   if (!db) return;

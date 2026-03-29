@@ -103,3 +103,8 @@
 - [x] Quiz date picker: fixed-height scrollable window so Start Quiz button is always visible
 - [x] Quiz: add "I don't know" button that reveals the answer without penalizing
 - [x] Persist quiz state across tab navigation (return to same question when switching back)
+
+## Improvements (Round 5)
+- [x] Library: collapsible date groups (click header to expand/collapse)
+- [x] Library: editable group name — rename a date group label, reflected in quiz/flashcard filters
+- [x] Backend: vocab.renameGroup procedure to bulk-update dateKey for all words in a group
