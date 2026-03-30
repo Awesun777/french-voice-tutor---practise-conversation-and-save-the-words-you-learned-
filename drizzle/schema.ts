@@ -39,8 +39,8 @@ export const vocabEntries = mysqlTable("vocab_entries", {
   // Spaced repetition fields
   quizCount: int("quizCount").default(0).notNull(),
   lastQuizzed: timestamp("lastQuizzed"),
-  // Date key for grouping (YYYY-MM-DD)
-  dateKey: varchar("dateKey", { length: 10 }).notNull(),
+  // Date key for grouping (YYYY-MM-DD or custom label up to 100 chars)
+  dateKey: varchar("dateKey", { length: 100 }).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -57,8 +57,8 @@ export const quizSessions = mysqlTable("quiz_sessions", {
   score: int("score").notNull(),
   total: int("total").notNull(),
   direction: mysqlEnum("direction", ["fr2en", "en2fr"]).notNull(),
-  bucketStart: varchar("bucketStart", { length: 10 }),
-  bucketEnd: varchar("bucketEnd", { length: 10 }),
+  bucketStart: varchar("bucketStart", { length: 100 }),
+  bucketEnd: varchar("bucketEnd", { length: 100 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

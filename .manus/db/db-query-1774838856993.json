@@ -1,0 +1,9 @@
+{
+  "query": "ALTER TABLE `quiz_sessions` MODIFY COLUMN `bucketStart` varchar(100);\nALTER TABLE `quiz_sessions` MODIFY COLUMN `bucketEnd` varchar(100);\nALTER TABLE `vocab_entries` MODIFY COLUMN `dateKey` varchar(100) NOT NULL;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2tViCNPNqR8WkNK.5a13a40b8b26 --database 8baQdh3xy5GA4FRvuUk9AV --execute ALTER TABLE `quiz_sessions` MODIFY COLUMN `bucketStart` varchar(100);\nALTER TABLE `quiz_sessions` MODIFY COLUMN `bucketEnd` varchar(100);\nALTER TABLE `vocab_entries` MODIFY COLUMN `dateKey` varchar(100) NOT NULL;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 705
+}

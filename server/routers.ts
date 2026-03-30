@@ -300,7 +300,7 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
           translation: z.string().min(1).max(512),
           entryKind: z.enum(["word", "phrase"]).default("word"),
           lessonSource: z.string().max(256).optional(),
-          dateKey: z.string().length(10).optional(),
+          dateKey: z.string().max(100).optional(),
         })
       )
       .mutation(async ({ ctx, input }) => {
@@ -319,7 +319,7 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
             translation: z.string().min(1).max(512),
             entryKind: z.enum(["word", "phrase"]).default("word"),
             lessonSource: z.string().max(256).optional(),
-            dateKey: z.string().length(10).optional(),
+            dateKey: z.string().max(100).optional(),
           })
         )
       )
@@ -384,8 +384,8 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
     renameGroup: protectedProcedure
       .input(
         z.object({
-          oldDateKey: z.string(),
-          newDateKey: z.string(),
+          oldDateKey: z.string().max(100),
+          newDateKey: z.string().min(1).max(100),
         })
       )
       .mutation(async ({ ctx, input }) => {
@@ -402,8 +402,8 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
           score: z.number(),
           total: z.number(),
           direction: z.enum(["fr2en", "en2fr"]),
-          bucketStart: z.string().optional(),
-          bucketEnd: z.string().optional(),
+          bucketStart: z.string().max(100).optional(),
+          bucketEnd: z.string().max(100).optional(),
         })
       )
       .mutation(async ({ ctx, input }) => {

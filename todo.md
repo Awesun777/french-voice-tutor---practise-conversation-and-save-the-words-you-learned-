@@ -108,3 +108,6 @@
 - [x] Library: collapsible date groups (click header to expand/collapse)
 - [x] Library: editable group name — rename a date group label, reflected in quiz/flashcard filters
 - [x] Backend: vocab.renameGroup procedure to bulk-update dateKey for all words in a group
+
+## Bug Fixes (Round 2)
+- [x] Fix group rename: dateKey varchar(10) too short for custom labels — relax to varchar(100) in schema + migration + router + frontend
