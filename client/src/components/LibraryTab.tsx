@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { VocabEntry, SidebarTab, ImportItem } from "@/types";
-import { Star, Trash2, Search, Download, Upload, Loader2, ChevronDown, ChevronRight, Pencil, Check, X } from "lucide-react";
+import { Star, Trash2, Search, Download, Upload, Loader2, ChevronDown, ChevronRight, Pencil, Check, X, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import ImportModal from "./ImportModal";
@@ -83,6 +83,7 @@ function GroupHeader({
   isOpen,
   onToggle,
   onRename,
+  onDeleteGroup,
 }: {
   dateKey: string;
   wordCount: number;
@@ -90,8 +91,10 @@ function GroupHeader({
   isOpen: boolean;
   onToggle: () => void;
   onRename: (oldKey: string, newKey: string) => void;
+  onDeleteGroup: (dateKey: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [draft, setDraft] = useState(fmtDateLabel(dateKey));
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -105,9 +108,6 @@ function GroupHeader({
   const commit = () => {
     const trimmed = draft.trim();
     if (!trimmed || trimmed === fmtDateLabel(dateKey)) { setEditing(false); return; }
-    // Try to normalise to YYYY-MM-DD so sorting stays correct.
-    // e.g. "Yesterday" → "2026-03-28", "Oct 2, 2025" → "2025-10-02"
-    // If it can't be parsed as a date, save the raw label (custom group name).
     const normalised = parseToDateKey(trimmed) ?? trimmed;
     onRename(dateKey, normalised);
     setEditing(false);
@@ -168,6 +168,33 @@ function GroupHeader({
           <span className="text-xs px-1.5 py-0.5 rounded-full bg-accent/20 text-accent font-semibold">{dueCount} due</span>
         )}
         <p className="text-xs text-muted-foreground">{wordCount} items</p>
+
+        {/* Delete group — shows confirm inline */}
+        {confirmingDelete ? (
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <span className="text-xs text-destructive font-semibold">Delete {wordCount} words?</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDeleteGroup(dateKey); setConfirmingDelete(false); }}
+              className="px-2 py-0.5 rounded-md bg-destructive text-destructive-foreground text-xs font-bold hover:bg-destructive/80 transition-colors"
+            >
+              Yes
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmingDelete(false); }}
+              className="px-2 py-0.5 rounded-md bg-muted text-muted-foreground text-xs font-bold hover:bg-muted/80 transition-colors"
+            >
+              No
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirmingDelete(true); }}
+            className="p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover/header:opacity-100 flex-shrink-0"
+            title="Delete all words in this group"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -272,6 +299,27 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
   const handleRename = (oldKey: string, newKey: string) => {
     if (oldKey === newKey) return;
     renameGroupMutation.mutate({ oldDateKey: oldKey, newDateKey: newKey });
+  };
+
+  const deleteGroupMutation = trpc.vocab.deleteGroup.useMutation({
+    onMutate: async ({ dateKey }) => {
+      await utils.vocab.list.cancel();
+      const prev = utils.vocab.list.getData();
+      utils.vocab.list.setData(undefined, (old) => old?.filter((w) => w.dateKey !== dateKey));
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.vocab.list.setData(undefined, ctx.prev);
+      toast.error("Failed to delete group");
+    },
+    onSuccess: (_data, vars) => {
+      utils.vocab.list.invalidate();
+      toast.success(`Deleted all words from "${fmtDateLabel(vars.dateKey)}"`);
+    },
+  });
+
+  const handleDeleteGroup = (dateKey: string) => {
+    deleteGroupMutation.mutate({ dateKey });
   };
 
   // Filter and group
@@ -406,6 +454,7 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
                     isOpen={isOpen}
                     onToggle={() => toggleCollapse(dateKey)}
                     onRename={handleRename}
+                    onDeleteGroup={handleDeleteGroup}
                   />
 
                   {isOpen && (

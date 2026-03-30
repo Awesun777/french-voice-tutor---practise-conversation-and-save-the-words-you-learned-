@@ -21,6 +21,7 @@ import {
   toggleVocabStar,
   updateVocabEntry,
   renameVocabGroup,
+  deleteVocabGroup,
 } from "./db";
 
 // ─── Dictionary search cache (in-memory, server-side) ─────────────────────────
@@ -390,6 +391,12 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
       )
       .mutation(async ({ ctx, input }) => {
         await renameVocabGroup(ctx.user.id, input.oldDateKey, input.newDateKey);
+        return { success: true };
+      }),
+    deleteGroup: protectedProcedure
+      .input(z.object({ dateKey: z.string().max(100) }))
+      .mutation(async ({ ctx, input }) => {
+        await deleteVocabGroup(ctx.user.id, input.dateKey);
         return { success: true };
       }),
   }),

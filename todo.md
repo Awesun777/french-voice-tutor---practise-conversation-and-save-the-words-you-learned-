@@ -116,3 +116,6 @@
 - [x] Library group sort: always sort newest-first by actual date value (not string comparison of display labels)
 - [x] Library group sort: "Yesterday" label must resolve to its real date (3/28/2026) for sorting
 - [x] Library group sort: re-sort immediately after a rename so order updates without page refresh
+
+## Improvements (Round 6)
+- [x] Library: delete entire group (all words in a date group) with one button on the group header
