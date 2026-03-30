@@ -9,9 +9,29 @@ import ImportModal from "./ImportModal";
 function todayKey() { return new Date().toISOString().split("T")[0]; }
 function yesterdayKey() { return new Date(Date.now() - 86400000).toISOString().split("T")[0]; }
 
+/**
+ * Try to parse a user-typed string into a YYYY-MM-DD key.
+ * Handles: "Yesterday", "Today", "Oct 2, 2025", "2025-10-02", "March 15", etc.
+ * Returns null if the string cannot be interpreted as a date.
+ */
+function parseToDateKey(input: string): string | null {
+  const trimmed = input.trim();
+  // Already a valid YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  // Special keywords
+  if (/^today$/i.test(trimmed)) return todayKey();
+  if (/^yesterday$/i.test(trimmed)) return yesterdayKey();
+  // Try native Date.parse — handles "Oct 2, 2025", "March 15 2026", "2025/10/02", etc.
+  const ts = Date.parse(trimmed);
+  if (!isNaN(ts)) {
+    // If no year was given (e.g. "March 15"), Date.parse uses current year — that's fine
+    return new Date(ts).toISOString().split("T")[0];
+  }
+  return null;
+}
+
 /** Format a dateKey (YYYY-MM-DD) or a custom label string for display */
 function fmtDateLabel(dateKey: string) {
-  // If it looks like a YYYY-MM-DD date, format it nicely
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
     if (dateKey === todayKey()) return "Today";
     if (dateKey === yesterdayKey()) return "Yesterday";
@@ -19,8 +39,18 @@ function fmtDateLabel(dateKey: string) {
       month: "short", day: "numeric", year: "numeric",
     });
   }
-  // Custom label — show as-is
   return dateKey;
+}
+
+/**
+ * Returns a numeric sort value for a dateKey.
+ * YYYY-MM-DD keys → their timestamp (ms). Custom labels → -1 (sort last).
+ */
+function dateKeyToSortValue(key: string): number {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+    return new Date(key + "T12:00:00").getTime();
+  }
+  return -1; // custom labels always sort to the bottom
 }
 
 function isDue(w: VocabEntry) {
@@ -75,8 +105,11 @@ function GroupHeader({
   const commit = () => {
     const trimmed = draft.trim();
     if (!trimmed || trimmed === fmtDateLabel(dateKey)) { setEditing(false); return; }
-    // If the new name looks like a date, normalise it; otherwise use as custom label
-    onRename(dateKey, trimmed);
+    // Try to normalise to YYYY-MM-DD so sorting stays correct.
+    // e.g. "Yesterday" → "2026-03-28", "Oct 2, 2025" → "2025-10-02"
+    // If it can't be parsed as a date, save the raw label (custom group name).
+    const normalised = parseToDateKey(trimmed) ?? trimmed;
+    onRename(dateKey, normalised);
     setEditing(false);
   };
 
@@ -256,13 +289,16 @@ export default function LibraryTab({ setActiveTab }: { setActiveTab: (tab: Sideb
     return acc;
   }, {});
 
-  // Sort groups newest-first (YYYY-MM-DD sorts lexicographically; custom labels go last)
+  // Sort groups newest-first by actual date value; custom labels sort to the bottom.
   const sortedGroups = Object.entries(grouped).sort(([a], [b]) => {
-    const aIsDate = /^\d{4}-\d{2}-\d{2}$/.test(a);
-    const bIsDate = /^\d{4}-\d{2}-\d{2}$/.test(b);
-    if (aIsDate && bIsDate) return b.localeCompare(a);
-    if (aIsDate) return -1;
-    if (bIsDate) return 1;
+    const av = dateKeyToSortValue(a);
+    const bv = dateKeyToSortValue(b);
+    // Both are real dates: sort descending (newest first)
+    if (av !== -1 && bv !== -1) return bv - av;
+    // One is a custom label: real dates come before custom labels
+    if (av !== -1) return -1;
+    if (bv !== -1) return 1;
+    // Both custom labels: alphabetical
     return a.localeCompare(b);
   });
 

@@ -111,3 +111,8 @@
 
 ## Bug Fixes (Round 2)
 - [x] Fix group rename: dateKey varchar(10) too short for custom labels — relax to varchar(100) in schema + migration + router + frontend
+
+## Bug Fixes (Round 3)
+- [x] Library group sort: always sort newest-first by actual date value (not string comparison of display labels)
+- [x] Library group sort: "Yesterday" label must resolve to its real date (3/28/2026) for sorting
+- [x] Library group sort: re-sort immediately after a rename so order updates without page refresh
