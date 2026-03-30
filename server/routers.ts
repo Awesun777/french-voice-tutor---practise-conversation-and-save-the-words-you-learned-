@@ -498,7 +498,7 @@ ${input.text.slice(0, 20000)}`,
           : "";
 
         const extractPrompt = `You are a French language teacher's assistant. Extract all distinct French vocabulary words and phrases from the text below.
-The text may contain date headers (e.g. "March 15", "2024-03-15", "Lesson 3 - Monday", "Week 2", "Jan 5th") that separate vocabulary sections. When you find such headers, tag all vocabulary that follows that header with the corresponding dateKey in YYYY-MM-DD format. If no date can be inferred, use "today" as the dateKey. Assume the current year if only month/day is given.
+The text may contain date headers (e.g. "March 15", "2024-03-15", "Lesson 3 - Monday", "Week 2", "Jan 5th") that separate vocabulary sections. When you find such headers, tag all vocabulary that follows that header with the corresponding dateKey in YYYY-MM-DD format. If no date can be inferred, use "today" as the dateKey. IMPORTANT: If a date header has only a month and day but no year (e.g. "March 15", "Jan 5th", "Oct 2"), always default the year to 2026.
 Ignore headings, titles, page numbers, and purely English metadata that are NOT vocabulary.
 Focus only on French words, expressions, and sentences a student would want to learn.
 ${extraRules}
@@ -612,7 +612,7 @@ ${docText.slice(0, 20000)}`,
         // Extract vocabulary
         const extraRules = input.instructions?.trim() ? `\nAdditional instructions: ${input.instructions.trim()}\n` : "";
         const extractPrompt = `You are a French language teacher's assistant. Extract all distinct French vocabulary words and phrases from the text below.
-The text may contain date headers (e.g. "March 15", "2024-03-15", "Lesson 3 - Monday", "Week 2", "Jan 5th") that separate vocabulary sections. When you find such headers, tag all vocabulary that follows that header with the corresponding dateKey in YYYY-MM-DD format. If no date can be inferred, use "today" as the dateKey. Assume the current year if only month/day is given.
+The text may contain date headers (e.g. "March 15", "2024-03-15", "Lesson 3 - Monday", "Week 2", "Jan 5th") that separate vocabulary sections. When you find such headers, tag all vocabulary that follows that header with the corresponding dateKey in YYYY-MM-DD format. If no date can be inferred, use "today" as the dateKey. IMPORTANT: If a date header has only a month and day but no year (e.g. "March 15", "Jan 5th", "Oct 2"), always default the year to 2026.
 Ignore headings, titles, page numbers, and purely English metadata that are NOT vocabulary.
 Focus only on French words, expressions, and sentences a student would want to learn.
 ${extraRules}

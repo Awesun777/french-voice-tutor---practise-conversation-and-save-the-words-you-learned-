@@ -123,3 +123,6 @@
 ## Improvements (Round 7)
 - [x] Quiz: add delete-word button on the active quiz card so user can remove incorrect imports mid-quiz
 - [x] Flashcards: add delete-word button on each flashcard so user can remove incorrect imports during study
+
+## Improvements (Round 8)
+- [x] Import: when a date header has no year, default it to 2026 in the AI extraction prompt
