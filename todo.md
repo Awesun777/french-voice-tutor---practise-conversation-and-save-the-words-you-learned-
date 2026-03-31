@@ -130,3 +130,8 @@
 ## Improvements (Round 9)
 - [x] Quiz: upgrade gradeAnswer AI prompt to give grammar-aware feedback (e.g. "you forgot the past participle agreement", "missing reflexive pronoun", "wrong gender")
 - [x] Quiz: update feedback UI to display the grammar explanation prominently below the correct answer
+
+## Improvements (Round 10)
+- [x] Dictionary: auto-add searched word to library on search result, with a toggle button to de-add
+- [x] Dictionary: always show the base/infinitive form (canonicalForm) when user searches a conjugated/gendered form
+- [x] Backend: add canonicalForm field to word search schema so AI always returns the base form

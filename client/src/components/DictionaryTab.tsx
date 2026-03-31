@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { DictResult, DictWordResult, DictPhraseResult, DictQuestionResult } from "@/types";
-import { Volume2, Plus, Loader2, Search, ChevronDown, ChevronUp, MessageCircle, Send, Sparkles, RefreshCw, ArrowLeftRight } from "lucide-react";
+import { Volume2, Plus, Loader2, Search, ChevronDown, ChevronUp, MessageCircle, Send, Sparkles, RefreshCw, ArrowLeftRight, BookmarkCheck, BookmarkX } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Streamdown } from "streamdown";
@@ -18,7 +18,12 @@ function classifyKind(term: string): "word" | "phrase" {
   return term.trim().split(/\s+/).length >= 3 ? "phrase" : "word";
 }
 
-function WordResult({ result, onAdd }: { result: DictWordResult; onAdd: (term: string, translation: string, kind: "word" | "phrase") => void }) {
+function WordResult({ result, onAdd, isAdded, onRemove }: {
+  result: DictWordResult;
+  onAdd: (term: string, translation: string, kind: "word" | "phrase") => void;
+  isAdded?: boolean;
+  onRemove?: () => void;
+}) {
   const [showConjugations, setShowConjugations] = useState(false);
   const [showSynonyms, setShowSynonyms] = useState(false);
   const [showConfusing, setShowConfusing] = useState(false);
@@ -62,12 +67,25 @@ function WordResult({ result, onAdd }: { result: DictWordResult; onAdd: (term: s
                 {result.isReflexive ? "reflexive" : "has reflexive"}
               </span>
             )}
-            <button
-              onClick={() => onAdd(result.word, result.translation, classifyKind(result.word))}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/15 hover:bg-primary/25 text-primary rounded-lg text-xs font-semibold transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" /> Add
-            </button>
+            {isAdded ? (
+              <button
+                onClick={onRemove}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/15 hover:bg-red-500/20 text-emerald-400 hover:text-red-400 rounded-lg text-xs font-semibold transition-colors group"
+                title="Remove from library"
+              >
+                <BookmarkCheck className="w-3.5 h-3.5 group-hover:hidden" />
+                <BookmarkX className="w-3.5 h-3.5 hidden group-hover:block" />
+                <span className="group-hover:hidden">Saved</span>
+                <span className="hidden group-hover:inline">Remove</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => onAdd(result.word, result.translation, classifyKind(result.word))}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/15 hover:bg-primary/25 text-primary rounded-lg text-xs font-semibold transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add
+              </button>
+            )}
           </div>
         </div>
 
@@ -505,13 +523,54 @@ export default function DictionaryTab() {
     onError: (err) => toast.error(err.message),
   });
 
+  // Map: result index → { id, term } for words that have been added to the library
+  const [addedMap, setAddedMap] = useState<Record<number, { id: number; term: string }>>({});
+
   const addMutation = trpc.vocab.add.useMutation({
-    onSuccess: () => {
-      toast.success("Added to library!");
+    onSuccess: (data, variables, context) => {
       utils.vocab.list.invalidate();
     },
     onError: () => toast.error("Failed to add word"),
   });
+
+  const deleteMutation = trpc.vocab.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Removed from library");
+      utils.vocab.list.invalidate();
+    },
+    onError: () => toast.error("Failed to remove word"),
+  });
+
+  // Auto-add word to library when a new found result arrives
+  useEffect(() => {
+    if (results.length === 0) return;
+    const latest = results[0];
+    if (latest.type === "word" && (latest as DictWordResult).found) {
+      const wr = latest as DictWordResult;
+      // Only auto-add if not already tracked
+      if (addedMap[0] && addedMap[0].term === wr.word) return;
+      addMutation.mutate(
+        { term: wr.word, translation: wr.translation, entryKind: classifyKind(wr.word) },
+        {
+          onSuccess: (data) => {
+            setAddedMap((prev) => ({ ...prev, [0]: { id: data.id, term: wr.word } }));
+          },
+        }
+      );
+    } else if (latest.type === "phrase" && (latest as DictPhraseResult).found) {
+      const pr = latest as DictPhraseResult;
+      if (addedMap[0] && addedMap[0].term === pr.phrase) return;
+      addMutation.mutate(
+        { term: pr.phrase, translation: pr.translation, entryKind: "phrase" },
+        {
+          onSuccess: (data) => {
+            setAddedMap((prev) => ({ ...prev, [0]: { id: data.id, term: pr.phrase } }));
+          },
+        }
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results]);
 
   const handleSearch = useCallback((overrideTerm?: string) => {
     const term = (overrideTerm ?? searchTerm).trim();
@@ -523,8 +582,30 @@ export default function DictionaryTab() {
     searchMutation.mutate({ term });
   }, [searchTerm, history, searchMutation]);
 
-  const handleAdd = (term: string, translation: string, kind: "word" | "phrase") => {
-    addMutation.mutate({ term, translation, entryKind: kind });
+  const handleAdd = (term: string, translation: string, kind: "word" | "phrase", resultIdx?: number) => {
+    addMutation.mutate(
+      { term, translation, entryKind: kind },
+      {
+        onSuccess: (data) => {
+          if (resultIdx !== undefined) {
+            setAddedMap((prev) => ({ ...prev, [resultIdx]: { id: data.id, term } }));
+          }
+          toast.success("Added to library!");
+          utils.vocab.list.invalidate();
+        },
+      }
+    );
+  };
+
+  const handleRemove = (resultIdx: number) => {
+    const entry = addedMap[resultIdx];
+    if (!entry) return;
+    deleteMutation.mutate({ id: entry.id });
+    setAddedMap((prev) => {
+      const next = { ...prev };
+      delete next[resultIdx];
+      return next;
+    });
   };
 
   return (
@@ -625,9 +706,14 @@ export default function DictionaryTab() {
           {results.map((result, i) => (
             <div key={i}>
               {result.type === "word" && (result as DictWordResult).found && (
-                <WordResult result={result as DictWordResult} onAdd={handleAdd} />
+                <WordResult
+                  result={result as DictWordResult}
+                  onAdd={(term, translation, kind) => handleAdd(term, translation, kind, i)}
+                  isAdded={!!addedMap[i]}
+                  onRemove={() => handleRemove(i)}
+                />
               )}
-              {result.type === "phrase" && <PhraseResult result={result as DictPhraseResult} onAdd={handleAdd} />}
+              {result.type === "phrase" && <PhraseResult result={result as DictPhraseResult} onAdd={(term, translation, kind) => handleAdd(term, translation, kind, i)} />}
               {result.type === "question" && <QuestionResult result={result as DictQuestionResult} />}
               {result.type === "error" && (
                 <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-4 text-sm text-destructive">
