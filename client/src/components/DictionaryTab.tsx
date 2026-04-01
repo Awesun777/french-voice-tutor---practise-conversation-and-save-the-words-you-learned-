@@ -512,12 +512,6 @@ function ContextChatPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Focus input when context changes
-  useEffect(() => {
-    if (vocabContext) {
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [vocabContext]);
 
   const handleSend = () => {
     const msg = input.trim();
@@ -727,8 +721,6 @@ export default function DictionaryTab() {
         setLastNotFoundTerm("");
       }
       setResults((prev) => [result, ...prev.slice(0, 9)]);
-      // Auto-select the newest result
-      setSelectedIdx(0);
     },
     onError: (err) => toast.error(err.message),
   });

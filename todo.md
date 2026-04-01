@@ -141,3 +141,6 @@
 - [x] Dictionary: right-side context chat panel — user can select a result card and ask follow-up questions; the AI receives the full card content as context
 - [x] Dictionary: selected card is highlighted; chat panel shows which card is in context
 - [x] Backend: new tutor.contextChat procedure that accepts a vocabContext object (word, translation, examples, etc.) alongside the user message
+
+## Bug Fixes (Round 4)
+- [x] Dictionary: fix focus-stealing bug — typing in search bar causes cursor to jump to context chat input
