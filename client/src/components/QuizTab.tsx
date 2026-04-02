@@ -167,6 +167,23 @@ export default function QuizTab() {
   };
 
   const starMutation = trpc.vocab.toggleStar.useMutation({
+    onMutate: async ({ id }) => {
+      await utils.vocab.list.cancel();
+      const prev = utils.vocab.list.getData();
+      utils.vocab.list.setData(undefined, (old) =>
+        old?.map((w) => (w.id === id ? { ...w, starred: !w.starred } : w))
+      );
+      // Also update the questions and wrongAnswers snapshots for immediate visual feedback
+      setQuestions((qs) => qs.map((q) => q.word.id === id ? { ...q, word: { ...q.word, starred: !q.word.starred } } : q));
+      setWrongAnswers((wa) => wa.map((w) => w.word.id === id ? { ...w, word: { ...w.word, starred: !w.word.starred } } : w));
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.vocab.list.setData(undefined, ctx.prev);
+      // Rollback snapshots too
+      setQuestions((qs) => qs.map((q) => q.word.id === _vars.id ? { ...q, word: { ...q.word, starred: !q.word.starred } } : q));
+      setWrongAnswers((wa) => wa.map((w) => w.word.id === _vars.id ? { ...w, word: { ...w.word, starred: !w.word.starred } } : w));
+    },
     onSettled: () => utils.vocab.list.invalidate(),
   });
 

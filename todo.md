@@ -144,3 +144,7 @@
 
 ## Bug Fixes (Round 4)
 - [x] Dictionary: fix focus-stealing bug — typing in search bar causes cursor to jump to context chat input
+
+## Bug Fixes (Round 5)
+- [x] Quiz: star/favorite button not working
+- [x] Flashcard: star/favorite button not working

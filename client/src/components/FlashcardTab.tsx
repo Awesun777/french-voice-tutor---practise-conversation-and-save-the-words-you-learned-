@@ -82,9 +82,15 @@ export default function FlashcardTab() {
       utils.vocab.list.setData(undefined, (old) =>
         old?.map((w) => (w.id === id ? { ...w, starred: !w.starred } : w))
       );
+      // Also update the deck snapshot so the star icon reflects immediately
+      setDeck((d) => d.map((w) => (w.id === id ? { ...w, starred: !w.starred } : w)));
       return { prev };
     },
-    onError: (_err, _vars, ctx) => { if (ctx?.prev) utils.vocab.list.setData(undefined, ctx.prev); },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.vocab.list.setData(undefined, ctx.prev);
+      // Rollback deck snapshot too
+      setDeck((d) => d.map((w) => (w.id === _vars.id ? { ...w, starred: !w.starred } : w)));
+    },
     onSettled: () => utils.vocab.list.invalidate(),
   });
 
