@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { VocabEntry } from "@/types";
-import { Volume2, Loader2, Star, Trash2 } from "lucide-react";
+import { Loader2, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-import { pronounce } from "@/lib/pronounce";
+import { usePronounce } from "@/lib/pronounce";
+import { PronounceButton } from "@/components/PronounceButton";
 
 function shuffle<T>(arr: T[]): T[] { return [...arr].sort(() => Math.random() - 0.5); }
 /**
@@ -136,6 +137,7 @@ export default function QuizTab() {
   );
   const fillRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
+  const { speak, state: pronounceState, activeText } = usePronounce();
 
   const gradeMutation = trpc.quiz.gradeAnswer.useMutation();
   const saveSessionMutation = trpc.quiz.saveSession.useMutation();
@@ -445,9 +447,14 @@ export default function QuizTab() {
                 {isTypingMode ? q.word.translation : q.word.term}
               </p>
               {!isTypingMode && (
-                <button onClick={() => pronounce(q.word.term)} className="p-1.5 bg-muted hover:bg-muted/80 rounded-full transition-colors">
-                  <Volume2 className="w-4 h-4 text-primary" />
-                </button>
+                <PronounceButton
+                  text={q.word.term}
+                  speak={speak}
+                  state={pronounceState}
+                  activeText={activeText}
+                  className="p-1.5 bg-muted hover:bg-muted/80 text-primary"
+                  iconSize="w-4 h-4"
+                />
               )}
             </div>
           </div>
@@ -478,9 +485,14 @@ export default function QuizTab() {
                       <div className="flex items-center gap-2">
                         <p className="text-red-300 font-semibold text-sm">✗ Incorrect — correct answer:</p>
                         <p className="text-foreground font-bold">{q.word.term}</p>
-                        <button onClick={() => pronounce(q.word.term)} className="p-1 bg-muted rounded-full hover:bg-muted/80" title="Pronounce">
-                          <Volume2 className="w-3.5 h-3.5 text-primary" />
-                        </button>
+                        <PronounceButton
+                          text={q.word.term}
+                          speak={speak}
+                          state={pronounceState}
+                          activeText={activeText}
+                          className="p-1 bg-muted hover:bg-muted/80 text-primary"
+                          iconSize="w-3.5 h-3.5"
+                        />
                       </div>
                       {fillResult.note && (
                         <p className="text-xs text-red-300">{fillResult.note}</p>

@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
-import { Volume2, Send, Loader2, Trash2 } from "lucide-react";
+import { Send, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Streamdown } from "streamdown";
 
-import { pronounce } from "@/lib/pronounce";
+import { usePronounce } from "@/lib/pronounce";
+import { PronounceButton } from "@/components/PronounceButton";
 
 function extractFrenchPhrases(text: string): string[] {
   // Extract text between backticks or bold markers that look French
@@ -30,6 +31,7 @@ export default function TutorTab() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const utils = trpc.useUtils();
+  const { speak, state: pronounceState, activeText } = usePronounce();
 
   const { data: messages = [], isLoading } = trpc.tutor.history.useQuery();
 
@@ -143,10 +145,10 @@ export default function TutorTab() {
                       {extractFrenchPhrases(msg.content).slice(0, 3).map((phrase, i) => (
                         <button
                           key={i}
-                          onClick={() => pronounce(phrase)}
+                          onClick={() => speak(phrase)}
                           className="flex items-center gap-1 px-2 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-full text-xs transition-colors"
                         >
-                          <Volume2 className="w-3 h-3" />
+                          <PronounceButton text={phrase} speak={speak} state={pronounceState} activeText={activeText} className="" iconSize="w-3 h-3" />
                           {phrase}
                         </button>
                       ))}

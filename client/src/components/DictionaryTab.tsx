@@ -10,7 +10,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Streamdown } from "streamdown";
 
-import { pronounce } from "@/lib/pronounce";
+import { usePronounce } from "@/lib/pronounce";
+import { PronounceButton } from "@/components/PronounceButton";
 
 function classifyKind(term: string): "word" | "phrase" {
   return term.trim().split(/\s+/).length >= 3 ? "phrase" : "word";
@@ -30,6 +31,12 @@ export interface VocabContext {
 }
 
 // ─── Word Result Card ─────────────────────────────────────────────────────────
+interface PronounceProps {
+  speak: (text: string) => void;
+  pronounceState: import("@/lib/pronounce").PronounceState;
+  activeText: string | null;
+}
+
 function WordResult({
   result,
   onAdd,
@@ -37,6 +44,9 @@ function WordResult({
   onRemove,
   isSelected,
   onSelect,
+  speak,
+  pronounceState,
+  activeText,
 }: {
   result: DictWordResult;
   onAdd: (term: string, translation: string, kind: "word" | "phrase") => void;
@@ -44,7 +54,7 @@ function WordResult({
   onRemove?: () => void;
   isSelected?: boolean;
   onSelect?: () => void;
-}) {
+} & PronounceProps) {
   const [showConjugations, setShowConjugations] = useState(false);
   const [showSynonyms, setShowSynonyms] = useState(false);
   const [showConfusing, setShowConfusing] = useState(false);
@@ -76,12 +86,14 @@ function WordResult({
           <div>
             <div className="flex items-center gap-2 mb-1">
               <h2 className="text-2xl font-bold text-foreground">{result.word}</h2>
-              <button
-                onClick={(e) => { e.stopPropagation(); pronounce(result.word); }}
-                className="p-1.5 rounded-full bg-primary/15 hover:bg-primary/25 text-primary transition-colors"
-              >
-                <Volume2 className="w-4 h-4" />
-              </button>
+              <PronounceButton
+                text={result.word}
+                speak={speak}
+                state={pronounceState}
+                activeText={activeText}
+                className="p-1.5 bg-primary/15 hover:bg-primary/25 text-primary"
+                iconSize="w-4 h-4"
+              />
             </div>
             {result.pronunciation && (
               <p className="text-sm text-muted-foreground font-mono">[{result.pronunciation}]</p>
@@ -134,7 +146,7 @@ function WordResult({
           <div className="bg-muted/50 rounded-xl p-3 mb-3 text-sm">
             <span className="text-muted-foreground">Conjugated form of </span>
             <button
-              onClick={(e) => { e.stopPropagation(); pronounce(result.baseForm); }}
+              onClick={(e) => { e.stopPropagation(); speak(result.baseForm); }}
               className="text-primary font-semibold hover:underline"
             >
               {result.baseForm}
@@ -165,12 +177,12 @@ function WordResult({
                   <div className="flex items-center gap-1.5">
                     <span className="text-muted-foreground text-xs">Base:</span>
                     <button
-                      onClick={(e) => { e.stopPropagation(); pronounce(result.nonReflexiveForm!); }}
+                      onClick={(e) => { e.stopPropagation(); speak(result.nonReflexiveForm!); }}
                       className="font-semibold text-foreground hover:text-primary transition-colors"
                     >
                       {result.nonReflexiveForm}
                     </button>
-                    <Volume2 className="w-3 h-3 text-muted-foreground" />
+                    <PronounceButton text={result.nonReflexiveForm!} speak={speak} state={pronounceState} activeText={activeText} className="text-muted-foreground hover:text-primary" iconSize="w-3 h-3" />
                   </div>
                 )}
                 {result.reflexiveForm && result.nonReflexiveForm && (
@@ -180,12 +192,12 @@ function WordResult({
                   <div className="flex items-center gap-1.5">
                     <span className="text-muted-foreground text-xs">Reflexive:</span>
                     <button
-                      onClick={(e) => { e.stopPropagation(); pronounce(result.reflexiveForm!); }}
+                      onClick={(e) => { e.stopPropagation(); speak(result.reflexiveForm!); }}
                       className="font-bold text-amber-300 hover:text-amber-200 transition-colors"
                     >
                       {result.reflexiveForm}
                     </button>
-                    <Volume2 className="w-3 h-3 text-muted-foreground" />
+                    <PronounceButton text={result.reflexiveForm!} speak={speak} state={pronounceState} activeText={activeText} className="text-muted-foreground hover:text-amber-300" iconSize="w-3 h-3" />
                   </div>
                 )}
               </div>
@@ -212,12 +224,7 @@ function WordResult({
             {result.examples.map((ex, i) => (
               <div key={i} className="bg-muted/40 rounded-xl p-3">
                 <div className="flex items-start gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); pronounce(ex.fr); }}
-                    className="mt-0.5 p-1 rounded-full hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-                  >
-                    <Volume2 className="w-3 h-3" />
-                  </button>
+                  <PronounceButton text={ex.fr} speak={speak} state={pronounceState} activeText={activeText} className="mt-0.5 p-1 hover:bg-primary/15 text-muted-foreground hover:text-primary flex-shrink-0" iconSize="w-3 h-3" />
                   <div>
                     <p className="text-sm font-medium text-foreground">{ex.fr}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{ex.en}</p>
@@ -247,12 +254,7 @@ function WordResult({
                   <div className="space-y-1">
                     {(forms as string[]).map((f, i) => (
                       <div key={i} className="flex items-center gap-2 text-sm">
-                        <button
-                          onClick={() => pronounce(f)}
-                          className="p-0.5 rounded hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors"
-                        >
-                          <Volume2 className="w-3 h-3" />
-                        </button>
+                        <PronounceButton text={f} speak={speak} state={pronounceState} activeText={activeText} className="p-0.5 hover:bg-primary/15 text-muted-foreground hover:text-primary" iconSize="w-3 h-3" />
                         <span className="text-foreground">{f}</span>
                       </div>
                     ))}
@@ -279,9 +281,7 @@ function WordResult({
               <div className="px-4 pb-4 space-y-2">
                 {result.synonyms.map((s, i) => (
                   <div key={i} className="flex items-center gap-2">
-                    <button onClick={() => pronounce(s.word)} className="p-0.5 rounded hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors">
-                      <Volume2 className="w-3 h-3" />
-                    </button>
+                    <PronounceButton text={s.word} speak={speak} state={pronounceState} activeText={activeText} className="p-0.5 hover:bg-primary/15 text-muted-foreground hover:text-primary" iconSize="w-3 h-3" />
                     <span className="text-sm font-medium text-foreground">{s.word}</span>
                     <span className="text-xs text-muted-foreground">— {s.meaning}</span>
                   </div>
@@ -305,9 +305,7 @@ function WordResult({
                 {result.confusingWords.map((c, i) => (
                   <div key={i}>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => pronounce(c.word)} className="p-0.5 rounded hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors">
-                        <Volume2 className="w-3 h-3" />
-                      </button>
+                      <PronounceButton text={c.word} speak={speak} state={pronounceState} activeText={activeText} className="p-0.5 hover:bg-primary/15 text-muted-foreground hover:text-primary" iconSize="w-3 h-3" />
                       <span className="text-sm font-medium text-foreground">{c.word}</span>
                       <span className="text-xs text-muted-foreground">— {c.meaning}</span>
                     </div>
@@ -331,6 +329,9 @@ function PhraseResult({
   onRemove,
   isSelected,
   onSelect,
+  speak,
+  pronounceState,
+  activeText,
 }: {
   result: DictPhraseResult;
   onAdd: (term: string, translation: string, kind: "word" | "phrase") => void;
@@ -338,7 +339,7 @@ function PhraseResult({
   onRemove?: () => void;
   isSelected?: boolean;
   onSelect?: () => void;
-}) {
+} & PronounceProps) {
   return (
     <div
       className={cn(
@@ -353,12 +354,14 @@ function PhraseResult({
         <div>
           <div className="flex items-center gap-2 mb-1">
             <h2 className="text-xl font-bold text-foreground">{result.phrase}</h2>
-            <button
-              onClick={(e) => { e.stopPropagation(); pronounce(result.phrase); }}
-              className="p-1.5 rounded-full bg-primary/15 hover:bg-primary/25 text-primary transition-colors"
-            >
-              <Volume2 className="w-4 h-4" />
-            </button>
+            <PronounceButton
+              text={result.phrase}
+              speak={speak}
+              state={pronounceState}
+              activeText={activeText}
+              className="p-1.5 bg-primary/15 hover:bg-primary/25 text-primary"
+              iconSize="w-4 h-4"
+            />
           </div>
           {result.pronunciation && (
             <p className="text-sm text-muted-foreground font-mono">[{result.pronunciation}]</p>
@@ -405,12 +408,7 @@ function PhraseResult({
           {result.examples.map((ex, i) => (
             <div key={i} className="bg-muted/40 rounded-xl p-3">
               <div className="flex items-start gap-2">
-                <button
-                  onClick={(e) => { e.stopPropagation(); pronounce(ex.fr); }}
-                  className="mt-0.5 p-1 rounded-full hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-                >
-                  <Volume2 className="w-3 h-3" />
-                </button>
+                <PronounceButton text={ex.fr} speak={speak} state={pronounceState} activeText={activeText} className="mt-0.5 p-1 hover:bg-primary/15 text-muted-foreground hover:text-primary flex-shrink-0" iconSize="w-3 h-3" />
                 <div>
                   <p className="text-sm font-medium text-foreground">{ex.fr}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">{ex.en}</p>
@@ -429,11 +427,14 @@ function QuestionResult({
   result,
   isSelected,
   onSelect,
+  speak,
+  pronounceState,
+  activeText,
 }: {
   result: DictQuestionResult;
   isSelected?: boolean;
   onSelect?: () => void;
-}) {
+} & PronounceProps) {
   return (
     <div
       className={cn(
@@ -462,12 +463,7 @@ function QuestionResult({
           <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Related expressions</p>
           {result.options.map((opt, i) => (
             <div key={i} className="flex items-start gap-3 bg-muted/30 rounded-xl p-3">
-              <button
-                onClick={(e) => { e.stopPropagation(); pronounce(opt.french); }}
-                className="mt-0.5 p-1 rounded-full hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-              >
-                <Volume2 className="w-3 h-3" />
-              </button>
+              <PronounceButton text={opt.french} speak={speak} state={pronounceState} activeText={activeText} className="mt-0.5 p-1 hover:bg-primary/15 text-muted-foreground hover:text-primary flex-shrink-0" iconSize="w-3 h-3" />
               <div>
                 <p className="text-sm font-semibold text-foreground">{opt.french}</p>
                 <p className="text-xs text-muted-foreground">{opt.english}</p>
@@ -698,6 +694,7 @@ export default function DictionaryTab() {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
+  const { speak, state: pronounceState, activeText } = usePronounce();
 
   const suggestMutation = trpc.dictionary.suggest.useMutation({
     onSuccess: (data) => setSuggestions(data.suggestions),
@@ -961,6 +958,9 @@ export default function DictionaryTab() {
                     onRemove={() => handleRemove(i)}
                     isSelected={selectedIdx === i}
                     onSelect={() => setSelectedIdx(selectedIdx === i ? null : i)}
+                    speak={speak}
+                    pronounceState={pronounceState}
+                    activeText={activeText}
                   />
                 )}
                 {result.type === "phrase" && (
@@ -971,6 +971,9 @@ export default function DictionaryTab() {
                     onRemove={() => handleRemove(i)}
                     isSelected={selectedIdx === i}
                     onSelect={() => setSelectedIdx(selectedIdx === i ? null : i)}
+                    speak={speak}
+                    pronounceState={pronounceState}
+                    activeText={activeText}
                   />
                 )}
                 {result.type === "question" && (
@@ -978,6 +981,9 @@ export default function DictionaryTab() {
                     result={result as DictQuestionResult}
                     isSelected={selectedIdx === i}
                     onSelect={() => setSelectedIdx(selectedIdx === i ? null : i)}
+                    speak={speak}
+                    pronounceState={pronounceState}
+                    activeText={activeText}
                   />
                 )}
                 {result.type === "error" && (

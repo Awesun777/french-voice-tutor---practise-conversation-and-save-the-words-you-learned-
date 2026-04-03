@@ -159,3 +159,6 @@
 
 ## Bug Fixes (Round 7)
 - [x] Audio/pronunciation: Chrome shows speaker icon but no sound plays intermittently — fix reliability
+
+## Improvements (Round 13)
+- [x] Pronunciation buttons: show spinner while voice engine loads, different icon while speaking

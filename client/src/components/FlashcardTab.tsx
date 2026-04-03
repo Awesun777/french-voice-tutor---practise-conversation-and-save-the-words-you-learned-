@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { VocabEntry } from "@/types";
-import { Volume2, Shuffle, Star, Mic, MicOff, ChevronLeft, ChevronRight, Loader2, Trash2 } from "lucide-react";
+import { Shuffle, Star, Mic, MicOff, ChevronLeft, ChevronRight, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-import { pronounce } from "@/lib/pronounce";
+import { usePronounce } from "@/lib/pronounce";
+import { PronounceButton } from "@/components/PronounceButton";
 
 function shuffle<T>(arr: T[]): T[] { return [...arr].sort(() => Math.random() - 0.5); }
 /** Priority tier: 0=never tested, 1=previously wrong, 2=starred, 3=previously correct */
@@ -42,6 +43,7 @@ export default function FlashcardTab() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const utils = trpc.useUtils();
+  const { speak, state: pronounceState, activeText } = usePronounce();
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
@@ -299,12 +301,14 @@ export default function FlashcardTab() {
                 </div>
                 <span className="text-xs font-bold text-primary uppercase tracking-widest mb-4">French</span>
                 <p className="text-3xl font-bold text-foreground text-center mb-3">{currentWord.term}</p>
-                <button
-                  onClick={(e) => { e.stopPropagation(); pronounce(currentWord.term); }}
-                  className="p-2 bg-primary/15 hover:bg-primary/25 rounded-full text-primary transition-colors"
-                >
-                  <Volume2 className="w-5 h-5" />
-                </button>
+                <PronounceButton
+                  text={currentWord.term}
+                  speak={speak}
+                  state={pronounceState}
+                  activeText={activeText}
+                  className="p-2 bg-primary/15 hover:bg-primary/25 text-primary"
+                  iconSize="w-5 h-5"
+                />
                 <p className="text-xs text-muted-foreground mt-4">Tap to reveal</p>
               </div>
               {/* Back - English */}
@@ -423,9 +427,7 @@ export default function FlashcardTab() {
               <div className="mt-2 flex items-center gap-2">
                 <p className="text-xs text-muted-foreground">Target:</p>
                 <p className="text-xs font-semibold text-foreground">{currentWord.term}</p>
-                <button onClick={() => pronounce(currentWord.term)} className="p-0.5 rounded hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors">
-                  <Volume2 className="w-3 h-3" />
-                </button>
+                <PronounceButton text={currentWord.term} speak={speak} state={pronounceState} activeText={activeText} className="p-0.5 hover:bg-primary/15 text-muted-foreground hover:text-primary" iconSize="w-3 h-3" />
               </div>
             </div>
           )}
