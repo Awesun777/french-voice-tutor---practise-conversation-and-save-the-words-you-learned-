@@ -10,13 +10,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Streamdown } from "streamdown";
 
-function pronounce(text: string) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "fr-FR";
-  u.rate = 0.85;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-}
+import { pronounce } from "@/lib/pronounce";
 
 function classifyKind(term: string): "word" | "phrase" {
   return term.trim().split(/\s+/).length >= 3 ? "phrase" : "word";

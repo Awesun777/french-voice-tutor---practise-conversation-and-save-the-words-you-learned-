@@ -5,12 +5,7 @@ import { Volume2, Shuffle, Star, Mic, MicOff, ChevronLeft, ChevronRight, Loader2
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-function pronounce(text: string) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "fr-FR"; u.rate = 0.85;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-}
+import { pronounce } from "@/lib/pronounce";
 
 function shuffle<T>(arr: T[]): T[] { return [...arr].sort(() => Math.random() - 0.5); }
 /** Priority tier: 0=never tested, 1=previously wrong, 2=starred, 3=previously correct */

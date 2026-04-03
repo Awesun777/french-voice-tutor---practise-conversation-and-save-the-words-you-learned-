@@ -5,12 +5,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Streamdown } from "streamdown";
 
-function pronounce(text: string) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "fr-FR"; u.rate = 0.85;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-}
+import { pronounce } from "@/lib/pronounce";
 
 function extractFrenchPhrases(text: string): string[] {
   // Extract text between backticks or bold markers that look French

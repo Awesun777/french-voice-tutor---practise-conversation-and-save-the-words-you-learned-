@@ -156,3 +156,6 @@
 
 ## Bug Fixes (Round 6)
 - [x] Library: delete button not visible on mobile
+
+## Bug Fixes (Round 7)
+- [x] Audio/pronunciation: Chrome shows speaker icon but no sound plays intermittently — fix reliability

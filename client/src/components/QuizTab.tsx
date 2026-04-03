@@ -5,12 +5,7 @@ import { Volume2, Loader2, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-function pronounce(text: string) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "fr-FR"; u.rate = 0.85;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-}
+import { pronounce } from "@/lib/pronounce";
 
 function shuffle<T>(arr: T[]): T[] { return [...arr].sort(() => Math.random() - 0.5); }
 /**
