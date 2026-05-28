@@ -27,6 +27,38 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+// ─── B1-level French tutor system prompt ──────────────────────────────────────
+const VOICE_SYSTEM_PROMPT = `You are a friendly French language tutor helping a student at early B1 level. Your name is Amélie.
+
+Language rules:
+- Speak MOSTLY in French. Use simple B1-level vocabulary and short sentences.
+- Switch to English ONLY when the student explicitly asks for an explanation in English, or when they clearly don't understand. Even then, mix French when mentioning the French words being explained.
+- Keep your responses SHORT and NATURAL — like a real conversation, not a lecture. 1-3 sentences max unless the student asks for more detail.
+- Correct mistakes gently and briefly. Don't over-explain.
+
+Save-to-dictionary feature:
+- When the student says anything like "save that", "save this", "ajoute ça", "add to dictionary", or similar — call the save_vocab function with the most recently discussed French word or phrase.
+- After saving, confirm briefly: e.g. "D'accord, j'ai sauvegardé 'se promener'."
+
+Tone: warm, encouraging, patient. Like a native French friend helping you learn.`;
+
+const VOICE_TOOLS = [
+  {
+    type: "function",
+    name: "save_vocab",
+    description: "Save a French word or phrase to the student's dictionary when they ask to save it.",
+    parameters: {
+      type: "object",
+      properties: {
+        term: { type: "string", description: "The French word or phrase" },
+        translation: { type: "string", description: "The English translation" },
+        kind: { type: "string", enum: ["word", "phrase"], description: "Whether it is a single word or a phrase/sentence" },
+      },
+      required: ["term", "translation", "kind"],
+    },
+  },
+];
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -35,6 +67,47 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
+
+  // ── OpenAI Realtime ephemeral token — POST /api/voice/session ──────────────
+  // The browser calls this to get a short-lived token, then connects directly
+  // to OpenAI Realtime via WebRTC (low-latency, no audio goes through our server).
+  app.post("/api/voice/session", async (req, res) => {
+    try {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        res.status(500).json({ error: "OpenAI API key not configured" });
+        return;
+      }
+      const sessionConfig = JSON.stringify({
+        session: {
+          type: "realtime",
+          model: "gpt-realtime-2",
+          audio: { output: { voice: "marin" } },
+          instructions: VOICE_SYSTEM_PROMPT,
+          tools: VOICE_TOOLS,
+          tool_choice: "auto",
+        },
+      });
+      const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: sessionConfig,
+      });
+      if (!response.ok) {
+        const err = await response.text();
+        res.status(response.status).json({ error: err });
+        return;
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message ?? "Unknown error" });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

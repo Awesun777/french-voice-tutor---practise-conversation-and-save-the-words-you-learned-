@@ -162,3 +162,17 @@
 
 ## Improvements (Round 13)
 - [x] Pronunciation buttons: show spinner while voice engine loads, different icon while speaking
+
+## Voice Chat Feature (Round 14)
+- [x] DB schema: voice_sessions table (id, userId, startedAt, endedAt, transcript JSON, summary, savedWords JSON)
+- [x] Backend: POST /api/voice/session — create ephemeral OpenAI Realtime token
+- [x] Backend: trpc.voice.saveFromSession — save a word/phrase discovered during voice chat
+- [x] Backend: trpc.voice.endSession — persist transcript + generate AI summary
+- [x] Backend: trpc.voice.sessions — list past voice sessions for the user
+- [x] Frontend: VoiceChat tab in sidebar
+- [x] Frontend: WebRTC connection to OpenAI Realtime API using ephemeral token
+- [x] Frontend: Waveform visualizer (user speaking vs AI speaking)
+- [x] Frontend: Live scrolling transcript panel
+- [x] Frontend: "Save to Dictionary" manual button + voice trigger ("save that")
+- [x] Frontend: "End Session" button → summary generation + display
+- [x] Frontend: Past sessions list with transcript + summary viewer

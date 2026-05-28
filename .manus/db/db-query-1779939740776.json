@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE `voice_sessions` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`transcript` text,\n\t`summary` text,\n\t`savedWords` text,\n\t`startedAt` bigint NOT NULL,\n\t`endedAt` bigint,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `voice_sessions_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2tViCNPNqR8WkNK.5a13a40b8b26 --database 8baQdh3xy5GA4FRvuUk9AV --execute CREATE TABLE `voice_sessions` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`transcript` text,\n\t`summary` text,\n\t`savedWords` text,\n\t`startedAt` bigint NOT NULL,\n\t`endedAt` bigint,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `voice_sessions_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 571
+}

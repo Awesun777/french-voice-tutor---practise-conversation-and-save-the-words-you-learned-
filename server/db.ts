@@ -5,10 +5,12 @@ import {
   QuizSession,
   TutorMessage,
   VocabEntry,
+  VoiceSession,
   quizSessions,
   tutorMessages,
   users,
   vocabEntries,
+  voiceSessions,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -232,6 +234,42 @@ export async function clearTutorHistory(userId: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
   await db.delete(tutorMessages).where(eq(tutorMessages.userId, userId));
+}
+
+// ─── Voice session helpers ─────────────────────────────────────────────────
+
+export async function createVoiceSession(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result = await db.insert(voiceSessions).values({
+    userId,
+    startedAt: Date.now(),
+  });
+  return (result as any)[0]?.insertId ?? 0;
+}
+
+export async function endVoiceSession(
+  id: number,
+  transcript: string,
+  summary: string,
+  savedWords: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(voiceSessions)
+    .set({ transcript, summary, savedWords, endedAt: Date.now() })
+    .where(eq(voiceSessions.id, id));
+}
+
+export async function getVoiceSessions(userId: number): Promise<VoiceSession[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(voiceSessions)
+    .where(eq(voiceSessions.userId, userId))
+    .orderBy(voiceSessions.startedAt);
 }
 
 // ─── Stats helpers ─────────────────────────────────────────────────────────────

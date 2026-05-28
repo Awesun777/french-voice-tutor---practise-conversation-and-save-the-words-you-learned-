@@ -9,6 +9,7 @@ import QuizTab from "@/components/QuizTab";
 import FlashcardTab from "@/components/FlashcardTab";
 import TutorTab from "@/components/TutorTab";
 import ProgressTab from "@/components/ProgressTab";
+import VoiceChatTab from "@/components/VoiceChatTab";
 import { Loader2, BookOpen } from "lucide-react";
 
 export default function Home() {
@@ -89,6 +90,7 @@ export default function Home() {
         {activeTab === "quiz" && <QuizTab />}
         {activeTab === "flashcards" && <FlashcardTab />}
         {activeTab === "tutor" && <TutorTab />}
+        {activeTab === "voice-chat" && <VoiceChatTab />}
         {activeTab === "progress" && <ProgressTab />}
       </main>
     </div>

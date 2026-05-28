@@ -11,10 +11,13 @@ import {
   addVocabEntries,
   addVocabEntry,
   clearTutorHistory,
+  createVoiceSession,
   deleteVocabEntry,
+  endVoiceSession,
   getQuizSessions,
   getTutorHistory,
   getVocabByUser,
+  getVoiceSessions,
   getVocabStats,
   saveQuizSession,
   saveTutorMessage,
@@ -804,6 +807,92 @@ The user is asking about this specific word/phrase. Answer in the context of thi
         }
         return { transcription: result.text ?? "" };
       }),
+  }),
+
+  // ─── Voice Chat Sessions ─────────────────────────────────────────────────────
+  voiceSession: router({
+    // Create a new session record and return its ID
+    create: protectedProcedure.mutation(async ({ ctx }) => {
+      const id = await createVoiceSession(ctx.user.id);
+      return { id };
+    }),
+
+    // Save a word discovered during voice chat to the vocab library
+    saveWord: protectedProcedure
+      .input(z.object({
+        term: z.string().min(1).max(512),
+        translation: z.string().min(1).max(512),
+        kind: z.enum(["word", "phrase"]).default("word"),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const today = todayKey();
+        const id = await addVocabEntry(ctx.user.id, {
+          term: input.term,
+          translation: input.translation,
+          entryKind: input.kind,
+          dateKey: today,
+          lessonSource: "Voice Chat",
+        });
+        return { id };
+      }),
+
+    // End a session: persist transcript + generate summary
+    end: protectedProcedure
+      .input(z.object({
+        sessionId: z.number(),
+        transcript: z.array(z.object({
+          role: z.enum(["user", "assistant"]),
+          text: z.string(),
+          timestamp: z.number(),
+        })),
+        savedWords: z.array(z.object({
+          term: z.string(),
+          translation: z.string(),
+          kind: z.string(),
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        // Generate a summary using the LLM
+        const transcriptText = input.transcript
+          .map((m) => `${m.role === "user" ? "Student" : "Amélie"}: ${m.text}`)
+          .join("\n");
+        let summary = "";
+        try {
+          const summaryResp = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: "You are a helpful assistant that summarises French tutoring sessions. Be concise (3-5 sentences). Mention: main topics discussed, any grammar points covered, and words/phrases saved. Write in English.",
+              },
+              {
+                role: "user",
+                content: `Summarise this French tutoring session transcript:\n\n${transcriptText.slice(0, 4000)}`,
+              },
+            ],
+          });
+          const raw = summaryResp.choices[0].message.content ?? "";
+          summary = typeof raw === "string" ? raw : JSON.stringify(raw);
+        } catch {
+          summary = "Session completed.";
+        }
+        await endVoiceSession(
+          input.sessionId,
+          JSON.stringify(input.transcript),
+          summary,
+          JSON.stringify(input.savedWords)
+        );
+        return { summary };
+      }),
+
+    // List all past sessions for the user
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const sessions = await getVoiceSessions(ctx.user.id);
+      return sessions.map((s: any) => ({
+        ...s,
+        transcript: s.transcript ? JSON.parse(s.transcript) : [],
+        savedWords: s.savedWords ? JSON.parse(s.savedWords) : [],
+      }));
+    }),
   }),
 
   // ─── Progress / Stats ────────────────────────────────────────────────────────

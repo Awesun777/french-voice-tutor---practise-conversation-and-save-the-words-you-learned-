@@ -77,3 +77,21 @@ export const tutorMessages = mysqlTable("tutor_messages", {
 });
 
 export type TutorMessage = typeof tutorMessages.$inferSelect;
+
+/**
+ * Voice chat sessions — one row per voice conversation.
+ * transcript: JSON array of { role, text, timestamp }
+ * savedWords: JSON array of { term, translation, type }
+ */
+export const voiceSessions = mysqlTable("voice_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  transcript: text("transcript"), // JSON string
+  summary: text("summary"),
+  savedWords: text("savedWords"), // JSON string
+  startedAt: bigint("startedAt", { mode: "number" }).notNull(),
+  endedAt: bigint("endedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type VoiceSession = typeof voiceSessions.$inferSelect;

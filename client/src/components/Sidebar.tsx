@@ -7,6 +7,7 @@ import {
   Brain,
   CreditCard,
   MessageCircle,
+  Mic,
   BarChart3,
   ChevronLeft,
   ChevronRight,
@@ -26,6 +27,7 @@ interface SidebarProps {
 const NAV_ITEMS: { id: SidebarTab; label: string; icon: React.ReactNode; emoji: string }[] = [
   { id: "dictionary", label: "Dictionary", icon: <BookOpen className="w-4.5 h-4.5" />, emoji: "📖" },
   { id: "tutor", label: "Tutor Chat", icon: <MessageCircle className="w-4.5 h-4.5" />, emoji: "💬" },
+  { id: "voice-chat", label: "Voice Chat", icon: <Mic className="w-4.5 h-4.5" />, emoji: "🎙️" },
   { id: "library", label: "My Library", icon: <BookMarked className="w-4.5 h-4.5" />, emoji: "📚" },
   { id: "quiz", label: "Quiz", icon: <Brain className="w-4.5 h-4.5" />, emoji: "🧠" },
   { id: "flashcards", label: "Flashcards", icon: <CreditCard className="w-4.5 h-4.5" />, emoji: "🃏" },
