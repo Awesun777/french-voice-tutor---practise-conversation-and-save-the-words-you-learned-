@@ -1,5 +1,5 @@
 /**
- * VoiceChatTab — Real-time voice conversation with a French tutor AI.
+ * VoiceChatTab — Real-time voice conversation with Romain, a French tutor AI.
  *
  * Architecture:
  *  1. User clicks "Start Session" → server issues an OpenAI Realtime ephemeral token
@@ -7,6 +7,13 @@
  *  3. Audio streams in both directions; the AI speaks back via a hidden <audio> element
  *  4. A DataChannel carries JSON events: transcripts, tool calls (save_vocab), etc.
  *  5. "End Session" persists the transcript + triggers an AI summary
+ *
+ * Changes in this version:
+ *  - Renamed tutor to Romain
+ *  - Added Pause/Resume button (mutes mic + pauses AI audio)
+ *  - End + Pause buttons centered at bottom of screen
+ *  - Real-time streaming transcript: AI text appears word-by-word as it speaks
+ *  - Increased VAD silence threshold via session update event after connection
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -22,9 +29,10 @@ import {
   ChevronUp,
   Loader2,
   Volume2,
-  VolumeX,
   MessageSquare,
   Clock,
+  Pause,
+  Play,
 } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -32,6 +40,8 @@ interface TranscriptLine {
   role: "user" | "assistant";
   text: string;
   timestamp: number;
+  /** id used to update in-progress streaming lines */
+  id?: string;
 }
 
 interface SavedWord {
@@ -40,7 +50,7 @@ interface SavedWord {
   kind: string;
 }
 
-type SessionState = "idle" | "connecting" | "active" | "ending" | "ended";
+type SessionState = "idle" | "connecting" | "active" | "paused" | "ending" | "ended";
 
 // ─── Waveform visualizer ───────────────────────────────────────────────────────
 function Waveform({ analyser, active, color }: { analyser: AnalyserNode | null; active: boolean; color: string }) {
@@ -146,7 +156,7 @@ function PastSessionCard({ session }: { session: any }) {
               <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
                 {session.transcript.map((line: TranscriptLine, i: number) => (
                   <div key={i} className={cn("text-xs", line.role === "user" ? "text-foreground" : "text-primary")}>
-                    <span className="font-semibold">{line.role === "user" ? "You" : "Amélie"}: </span>
+                    <span className="font-semibold">{line.role === "user" ? "You" : "Romain"}: </span>
                     {line.text}
                   </div>
                 ))}
@@ -165,11 +175,13 @@ export default function VoiceChatTab() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
-  const [isMuted, setIsMuted] = useState(false);
   const [aiSpeaking, setAiSpeaking] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [endedSummary, setEndedSummary] = useState<string | null>(null);
   const [showPastSessions, setShowPastSessions] = useState(false);
+
+  // Track the in-progress AI streaming line (delta accumulation)
+  const streamingLineIdRef = useRef<string | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -199,40 +211,54 @@ export default function VoiceChatTab() {
     try {
       const msg = JSON.parse(event.data);
 
-      // Transcript delta from user (speech-to-text)
+      // ── User speech transcript ──────────────────────────────────────────────
       if (msg.type === "conversation.item.input_audio_transcription.completed") {
-        const text = msg.transcript?.trim();
+        const text = (msg.transcript ?? "").trim();
         if (text) {
           setTranscript((prev) => [...prev, { role: "user", text, timestamp: Date.now() }]);
           setUserSpeaking(false);
         }
       }
 
-      // User started speaking
-      if (msg.type === "input_audio_buffer.speech_started") {
-        setUserSpeaking(true);
-      }
-      if (msg.type === "input_audio_buffer.speech_stopped") {
-        setUserSpeaking(false);
-      }
+      if (msg.type === "input_audio_buffer.speech_started") setUserSpeaking(true);
+      if (msg.type === "input_audio_buffer.speech_stopped") setUserSpeaking(false);
 
-      // AI response audio started/stopped
-      if (msg.type === "response.audio.delta") {
-        setAiSpeaking(true);
-      }
-      if (msg.type === "response.audio.done") {
-        setAiSpeaking(false);
-      }
+      // ── AI audio state ──────────────────────────────────────────────────────
+      if (msg.type === "response.audio.delta") setAiSpeaking(true);
+      if (msg.type === "response.audio.done") setAiSpeaking(false);
 
-      // AI transcript (text of what Amélie said)
-      if (msg.type === "response.audio_transcript.done") {
-        const text = msg.transcript?.trim();
-        if (text) {
-          setTranscript((prev) => [...prev, { role: "assistant", text, timestamp: Date.now() }]);
+      // ── Real-time AI transcript streaming ──────────────────────────────────
+      // response.audio_transcript.delta fires as the AI speaks, word by word
+      if (msg.type === "response.audio_transcript.delta") {
+        const delta = msg.delta ?? "";
+        if (!delta) return;
+
+        if (!streamingLineIdRef.current) {
+          // Start a new streaming line
+          const lineId = `stream-${Date.now()}`;
+          streamingLineIdRef.current = lineId;
+          setTranscript((prev) => [
+            ...prev,
+            { role: "assistant", text: delta, timestamp: Date.now(), id: lineId },
+          ]);
+        } else {
+          // Append delta to the existing streaming line
+          const lineId = streamingLineIdRef.current;
+          setTranscript((prev) =>
+            prev.map((line) =>
+              line.id === lineId ? { ...line, text: line.text + delta } : line
+            )
+          );
         }
       }
 
-      // Tool call: save_vocab
+      // response.audio_transcript.done — finalize the streaming line
+      if (msg.type === "response.audio_transcript.done") {
+        streamingLineIdRef.current = null;
+        // The line is already in transcript from deltas; nothing extra needed
+      }
+
+      // ── Tool call: save_vocab ───────────────────────────────────────────────
       if (msg.type === "response.function_call_arguments.done" && msg.name === "save_vocab") {
         try {
           const args = JSON.parse(msg.arguments);
@@ -281,6 +307,7 @@ export default function VoiceChatTab() {
       setTranscript([]);
       setSavedWords([]);
       setEndedSummary(null);
+      streamingLineIdRef.current = null;
 
       // 1. Create a session record in our DB
       const { id } = await createSessionMutation.mutateAsync();
@@ -337,6 +364,20 @@ export default function VoiceChatTab() {
       dcRef.current = dc;
       dc.addEventListener("message", handleDataChannelMessage);
       dc.addEventListener("open", () => {
+        // Update VAD settings: long silence threshold so slow speakers aren't interrupted
+        dc.send(JSON.stringify({
+          type: "session.update",
+          session: {
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.4,
+              prefix_padding_ms: 500,
+              silence_duration_ms: 1500,
+            },
+            input_audio_transcription: { model: "whisper-1" },
+          },
+        }));
+
         // Send initial greeting trigger
         dc.send(JSON.stringify({
           type: "conversation.item.create",
@@ -410,26 +451,25 @@ export default function VoiceChatTab() {
     }
   };
 
-  const toggleMute = () => {
-    localStreamRef.current?.getTracks().forEach((t) => {
-      t.enabled = isMuted;
-    });
-    setIsMuted((m) => !m);
+  const togglePause = () => {
+    if (sessionState === "active") {
+      // Pause: mute mic tracks + pause AI audio playback
+      localStreamRef.current?.getTracks().forEach((t) => { t.enabled = false; });
+      if (audioRef.current) audioRef.current.pause();
+      setSessionState("paused");
+    } else if (sessionState === "paused") {
+      // Resume: unmute mic + resume AI audio
+      localStreamRef.current?.getTracks().forEach((t) => { t.enabled = true; });
+      if (audioRef.current) audioRef.current.play().catch(() => {});
+      setSessionState("active");
+    }
   };
 
   const manualSave = () => {
-    if (transcript.length === 0) {
-      toast("No conversation yet to save from");
-      return;
-    }
-    // Find the last assistant message and extract the first French-looking phrase
-    const lastAi = [...transcript].reverse().find((t) => t.role === "assistant");
-    if (!lastAi) { toast("No AI message to save from"); return; }
-    // Simple heuristic: take the first word/phrase in backticks or the whole message
-    const match = lastAi.text.match(/[«»""]([^«»""]+)[«»""]/);
-    const term = match ? match[1] : lastAi.text.split(/[.,!?]/)[0].trim().slice(0, 60);
     toast(`To save a word, say "save that" or "ajoute ça" during the conversation.`);
   };
+
+  const isSessionLive = sessionState === "active" || sessionState === "paused";
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -437,11 +477,17 @@ export default function VoiceChatTab() {
       <div className="flex-shrink-0 border-b border-border bg-background/80 backdrop-blur-sm px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Mic className="w-4 h-4 text-primary" />
-          <span className="font-semibold text-sm text-foreground">Voice Chat with Amélie</span>
+          <span className="font-semibold text-sm text-foreground">Voice Chat with Romain</span>
           {sessionState === "active" && (
             <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               Live
+            </span>
+          )}
+          {sessionState === "paused" && (
+            <span className="flex items-center gap-1 text-xs text-amber-400 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              Paused
             </span>
           )}
         </div>
@@ -476,14 +522,15 @@ export default function VoiceChatTab() {
               <Mic className="w-8 h-8 text-primary" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-foreground mb-2">Talk to Amélie</h2>
+              <h2 className="text-xl font-bold text-foreground mb-2">Talk to Romain</h2>
               <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
                 Your personal French tutor. Have a natural conversation in French, ask questions, and say <span className="text-primary font-medium">"save that"</span> to add any word or phrase to your library.
               </p>
             </div>
             <div className="bg-card border border-border rounded-xl p-4 text-left max-w-sm w-full space-y-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Tips</p>
-              <p className="text-xs text-muted-foreground">• Speak naturally — Amélie will match your B1 level</p>
+              <p className="text-xs text-muted-foreground">• Speak naturally — Romain will match your B1 level</p>
+              <p className="text-xs text-muted-foreground">• Take your time — Romain won't interrupt you</p>
               <p className="text-xs text-muted-foreground">• Say <span className="text-primary">"save that"</span> or <span className="text-primary">"ajoute ça"</span> to save a word</p>
               <p className="text-xs text-muted-foreground">• Ask for explanations in English anytime</p>
               <p className="text-xs text-muted-foreground">• End the session to get an AI summary</p>
@@ -501,27 +548,27 @@ export default function VoiceChatTab() {
         {sessionState === "connecting" && (
           <div className="flex flex-col items-center justify-center h-full min-h-[400px] gap-4">
             <Loader2 className="w-10 h-10 text-primary animate-spin" />
-            <p className="text-sm text-muted-foreground">Connecting to Amélie…</p>
+            <p className="text-sm text-muted-foreground">Connecting to Romain…</p>
           </div>
         )}
 
-        {/* Active session */}
-        {sessionState === "active" && (
+        {/* Active / Paused session */}
+        {isSessionLive && (
           <div className="flex flex-col h-full">
             {/* Waveform area */}
             <div className="flex-shrink-0 px-4 py-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <div className={cn("bg-card border rounded-xl p-3 transition-colors", userSpeaking ? "border-primary/60 bg-primary/5" : "border-border")}>
+                <div className={cn("bg-card border rounded-xl p-3 transition-colors", userSpeaking && sessionState === "active" ? "border-primary/60 bg-primary/5" : "border-border")}>
                   <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                    {isMuted ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
-                    You {isMuted && <span className="text-destructive">(muted)</span>}
+                    {sessionState === "paused" ? <MicOff className="w-3 h-3 text-amber-400" /> : <Mic className="w-3 h-3" />}
+                    You {sessionState === "paused" && <span className="text-amber-400">(paused)</span>}
                   </p>
-                  <Waveform analyser={userAnalyserRef.current} active={userSpeaking && !isMuted} color="#a78bfa" />
+                  <Waveform analyser={userAnalyserRef.current} active={userSpeaking && sessionState === "active"} color="#a78bfa" />
                 </div>
                 <div className={cn("bg-card border rounded-xl p-3 transition-colors", aiSpeaking ? "border-emerald-500/60 bg-emerald-500/5" : "border-border")}>
                   <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
                     <Volume2 className="w-3 h-3" />
-                    Amélie {aiSpeaking && <span className="text-emerald-400 animate-pulse">speaking…</span>}
+                    Romain {aiSpeaking && <span className="text-emerald-400 animate-pulse">speaking…</span>}
                   </p>
                   <Waveform analyser={aiAnalyserRef.current} active={aiSpeaking} color="#34d399" />
                 </div>
@@ -542,14 +589,14 @@ export default function VoiceChatTab() {
               )}
             </div>
 
-            {/* Live transcript */}
-            <div className="flex-1 overflow-y-auto px-4 pb-2 space-y-2">
+            {/* Live transcript — scrollable, takes remaining space */}
+            <div className="flex-1 overflow-y-auto px-4 pb-2 space-y-2 min-h-0">
               {transcript.length === 0 && (
                 <p className="text-center text-xs text-muted-foreground py-4">Conversation will appear here…</p>
               )}
               {transcript.map((line, i) => (
                 <div
-                  key={i}
+                  key={line.id ?? i}
                   className={cn(
                     "flex gap-2 items-start",
                     line.role === "user" ? "flex-row-reverse" : "flex-row"
@@ -559,7 +606,7 @@ export default function VoiceChatTab() {
                     "w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold mt-0.5",
                     line.role === "user" ? "bg-secondary text-foreground" : "bg-primary/20 text-primary"
                   )}>
-                    {line.role === "user" ? "Me" : "A"}
+                    {line.role === "user" ? "Me" : "R"}
                   </div>
                   <div className={cn(
                     "max-w-[75%] px-3 py-2 rounded-2xl text-sm leading-relaxed",
@@ -568,43 +615,60 @@ export default function VoiceChatTab() {
                       : "bg-card border border-border text-foreground rounded-tl-sm"
                   )}>
                     {line.text}
+                    {/* Blinking cursor for the in-progress streaming line */}
+                    {line.id && streamingLineIdRef.current === line.id && (
+                      <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-middle" />
+                    )}
                   </div>
                 </div>
               ))}
               <div ref={transcriptEndRef} />
             </div>
 
-            {/* Controls */}
-            <div className="flex-shrink-0 border-t border-border px-4 py-3 flex items-center justify-between gap-3">
-              <button
-                onClick={toggleMute}
-                className={cn(
-                  "p-3 rounded-xl border transition-colors",
-                  isMuted
-                    ? "bg-destructive/20 border-destructive/50 text-destructive"
-                    : "bg-card border-border text-muted-foreground hover:text-foreground"
-                )}
-                title={isMuted ? "Unmute" : "Mute"}
-              >
-                {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-              </button>
+            {/* ── Controls — centered End + Pause, mute + save on sides ── */}
+            <div className="flex-shrink-0 border-t border-border px-4 py-4">
+              {/* Save word hint row */}
+              <div className="flex justify-center mb-3">
+                <button
+                  onClick={manualSave}
+                  className="flex items-center gap-2 px-4 py-2 bg-card border border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground rounded-xl text-xs font-medium transition-colors"
+                  title="Save last word to dictionary"
+                >
+                  <BookmarkPlus className="w-3.5 h-3.5" />
+                  Say "save that" to save a word
+                </button>
+              </div>
 
-              <button
-                onClick={manualSave}
-                className="flex items-center gap-2 px-4 py-2.5 bg-card border border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground rounded-xl text-sm font-medium transition-colors"
-                title="Save last word to dictionary"
-              >
-                <BookmarkPlus className="w-4 h-4" />
-                Save word
-              </button>
+              {/* Main controls row — centered */}
+              <div className="flex items-center justify-center gap-4">
+                {/* Pause / Resume */}
+                <button
+                  onClick={togglePause}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 px-6 py-3 rounded-2xl border font-semibold text-sm transition-all",
+                    sessionState === "paused"
+                      ? "bg-amber-500/20 border-amber-500/50 text-amber-400 hover:bg-amber-500/30"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  )}
+                  title={sessionState === "paused" ? "Resume" : "Pause"}
+                >
+                  {sessionState === "paused"
+                    ? <Play className="w-5 h-5" />
+                    : <Pause className="w-5 h-5" />
+                  }
+                  <span className="text-xs">{sessionState === "paused" ? "Resume" : "Pause"}</span>
+                </button>
 
-              <button
-                onClick={endSession}
-                className="flex items-center gap-2 px-4 py-2.5 bg-destructive/10 hover:bg-destructive/20 border border-destructive/30 text-destructive rounded-xl text-sm font-semibold transition-colors"
-              >
-                <PhoneOff className="w-4 h-4" />
-                End
-              </button>
+                {/* End session */}
+                <button
+                  onClick={endSession}
+                  className="flex flex-col items-center gap-1.5 px-6 py-3 bg-destructive/10 hover:bg-destructive/20 border border-destructive/40 text-destructive rounded-2xl font-semibold text-sm transition-all"
+                  title="End session"
+                >
+                  <PhoneOff className="w-5 h-5" />
+                  <span className="text-xs">End</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -651,7 +715,7 @@ export default function VoiceChatTab() {
                 <div className="space-y-1 max-h-48 overflow-y-auto">
                   {transcript.map((line, i) => (
                     <p key={i} className={cn("text-xs", line.role === "user" ? "text-foreground" : "text-primary")}>
-                      <span className="font-semibold">{line.role === "user" ? "You" : "Amélie"}: </span>
+                      <span className="font-semibold">{line.role === "user" ? "You" : "Romain"}: </span>
                       {line.text}
                     </p>
                   ))}
@@ -666,6 +730,7 @@ export default function VoiceChatTab() {
                 setSavedWords([]);
                 setEndedSummary(null);
                 setSessionId(null);
+                streamingLineIdRef.current = null;
               }}
               className="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl font-semibold transition-all"
             >

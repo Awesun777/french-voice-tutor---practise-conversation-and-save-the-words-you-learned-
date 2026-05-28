@@ -854,7 +854,7 @@ The user is asking about this specific word/phrase. Answer in the context of thi
       .mutation(async ({ input }) => {
         // Generate a summary using the LLM
         const transcriptText = input.transcript
-          .map((m) => `${m.role === "user" ? "Student" : "Amélie"}: ${m.text}`)
+          .map((m) => `${m.role === "user" ? "Student" : "Romain"}: ${m.text}`)
           .join("\n");
         let summary = "";
         try {

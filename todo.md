@@ -176,3 +176,9 @@
 - [x] Frontend: "Save to Dictionary" manual button + voice trigger ("save that")
 - [x] Frontend: "End Session" button → summary generation + display
 - [x] Frontend: Past sessions list with transcript + summary viewer
+
+## Voice Chat Improvements (Round 15)
+- [x] Voice Chat: add Pause/Resume button alongside End button, centered on screen
+- [x] Voice Chat: show real-time streaming transcript of AI speech (delta events)
+- [x] Voice Chat: increase VAD silence threshold so slow French speakers are not interrupted
+- [x] Voice Chat: rename tutor from Amélie to Romain
