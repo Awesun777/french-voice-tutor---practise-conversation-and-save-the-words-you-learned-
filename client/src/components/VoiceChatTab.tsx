@@ -211,12 +211,42 @@ export default function VoiceChatTab() {
     try {
       const msg = JSON.parse(event.data);
 
+      // Debug: log ALL events so we can see what the GA API actually sends
+      console.log("[Realtime event]", msg.type, msg);
+
       // ── User speech transcript ──────────────────────────────────────────────
-      if (msg.type === "conversation.item.input_audio_transcription.completed") {
-        const text = (msg.transcript ?? "").trim();
+      // GA API: conversation.item.input_audio_transcription.completed
+      // Also handle delta for live user transcript streaming
+      if (
+        msg.type === "conversation.item.input_audio_transcription.completed" ||
+        msg.type === "conversation.item.input_audio_transcription.done"
+      ) {
+        const text = (msg.transcript ?? msg.text ?? "").trim();
         if (text) {
-          setTranscript((prev) => [...prev, { role: "user", text, timestamp: Date.now() }]);
+          setTranscript((prev) => {
+            // Replace any partial user line or append new one
+            const lastUser = [...prev].reverse().find((l) => l.role === "user" && l.id?.startsWith("user-stream"));
+            if (lastUser) {
+              return prev.map((l) => l.id === lastUser.id ? { ...l, text, id: undefined } : l);
+            }
+            return [...prev, { role: "user", text, timestamp: Date.now() }];
+          });
           setUserSpeaking(false);
+        }
+      }
+
+      // Live user transcript delta (if enabled)
+      if (msg.type === "conversation.item.input_audio_transcription.delta") {
+        const delta = msg.delta ?? "";
+        if (delta) {
+          setTranscript((prev) => {
+            const lastUser = [...prev].reverse().find((l) => l.role === "user" && l.id?.startsWith("user-stream"));
+            if (lastUser) {
+              return prev.map((l) => l.id === lastUser.id ? { ...l, text: l.text + delta } : l);
+            }
+            const lineId = `user-stream-${Date.now()}`;
+            return [...prev, { role: "user", text: delta, timestamp: Date.now(), id: lineId }];
+          });
         }
       }
 
@@ -224,12 +254,31 @@ export default function VoiceChatTab() {
       if (msg.type === "input_audio_buffer.speech_stopped") setUserSpeaking(false);
 
       // ── AI audio state ──────────────────────────────────────────────────────
-      if (msg.type === "response.audio.delta") setAiSpeaking(true);
-      if (msg.type === "response.audio.done") setAiSpeaking(false);
+      // GA API uses response.output_audio.delta / .done
+      // Beta API used response.audio.delta / .done
+      // Handle both for compatibility
+      if (
+        msg.type === "response.output_audio.delta" ||
+        msg.type === "response.audio.delta"
+      ) setAiSpeaking(true);
+      if (
+        msg.type === "response.output_audio.done" ||
+        msg.type === "response.audio.done" ||
+        msg.type === "response.done"
+      ) setAiSpeaking(false);
 
       // ── Real-time AI transcript streaming ──────────────────────────────────
-      // response.audio_transcript.delta fires as the AI speaks, word by word
-      if (msg.type === "response.audio_transcript.delta") {
+      // GA API: response.output_audio_transcript.delta (fires word-by-word as AI speaks)
+      // Beta API used: response.audio_transcript.delta
+      // Handle both for compatibility
+      const isAiTranscriptDelta =
+        msg.type === "response.output_audio_transcript.delta" ||
+        msg.type === "response.audio_transcript.delta";
+      const isAiTranscriptDone =
+        msg.type === "response.output_audio_transcript.done" ||
+        msg.type === "response.audio_transcript.done";
+
+      if (isAiTranscriptDelta) {
         const delta = msg.delta ?? "";
         if (!delta) return;
 
@@ -252,10 +301,27 @@ export default function VoiceChatTab() {
         }
       }
 
-      // response.audio_transcript.done — finalize the streaming line
-      if (msg.type === "response.audio_transcript.done") {
+      // Finalize the streaming line
+      if (isAiTranscriptDone) {
         streamingLineIdRef.current = null;
-        // The line is already in transcript from deltas; nothing extra needed
+      }
+
+      // Fallback: if no delta events, capture full text from response.output_item.done
+      if (msg.type === "response.output_item.done") {
+        const item = msg.item;
+        if (item?.role === "assistant" && item?.content) {
+          for (const c of item.content) {
+            const text = c.transcript ?? c.text ?? "";
+            if (text && !streamingLineIdRef.current) {
+              // Only add if we didn't already stream it via deltas
+              setTranscript((prev) => {
+                const lastAI = [...prev].reverse().find((l) => l.role === "assistant");
+                if (lastAI && lastAI.text === text) return prev; // already there
+                return [...prev, { role: "assistant", text, timestamp: Date.now() }];
+              });
+            }
+          }
+        }
       }
 
       // ── Tool call: save_vocab ───────────────────────────────────────────────
@@ -364,21 +430,25 @@ export default function VoiceChatTab() {
       dcRef.current = dc;
       dc.addEventListener("message", handleDataChannelMessage);
       dc.addEventListener("open", () => {
-        // Update VAD settings: long silence threshold so slow speakers aren't interrupted
+        // Configure transcription and VAD via session.update (must be done over data channel,
+        // not at session creation time for the GA API).
         dc.send(JSON.stringify({
           type: "session.update",
           session: {
+            // Enable Whisper transcription for user speech → gives us transcript events
+            input_audio_transcription: { model: "whisper-1" },
+            // Slow VAD: wait 1.5s of silence before treating turn as done
+            // This prevents interrupting the student while they form French sentences
             turn_detection: {
               type: "server_vad",
               threshold: 0.4,
               prefix_padding_ms: 500,
               silence_duration_ms: 1500,
             },
-            input_audio_transcription: { model: "whisper-1" },
           },
         }));
 
-        // Send initial greeting trigger
+        // Trigger the initial greeting
         dc.send(JSON.stringify({
           type: "conversation.item.create",
           item: {

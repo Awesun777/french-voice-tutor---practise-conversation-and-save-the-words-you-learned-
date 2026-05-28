@@ -87,6 +87,9 @@ async function startServer() {
           instructions: VOICE_SYSTEM_PROMPT,
           tools: VOICE_TOOLS,
           tool_choice: "auto",
+          // Note: input_audio_transcription and turn_detection must be sent
+          // via session.update over the data channel after WebRTC connection,
+          // as the client_secrets endpoint does not support them.
         },
       });
       const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
