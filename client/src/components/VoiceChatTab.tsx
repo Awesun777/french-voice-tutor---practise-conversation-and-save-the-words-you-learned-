@@ -425,6 +425,8 @@ export default function VoiceChatTab() {
         dc.send(JSON.stringify({
           type: "session.update",
           session: {
+            // Set voice (must be done over data channel for unified interface)
+            voice: "marin",
             // Enable Whisper transcription for user speech → gives us transcript events
             input_audio_transcription: { model: "whisper-1" },
             // Slow VAD: wait 1.5s of silence before treating turn as done

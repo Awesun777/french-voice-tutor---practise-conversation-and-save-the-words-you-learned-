@@ -93,18 +93,13 @@ async function startServer() {
       // Build multipart FormData with sdp and session fields
       // (unified interface requires multipart/form-data, NOT raw SDP body)
       const sessionConfig = JSON.stringify({
+        type: "realtime",
         model: "gpt-realtime-2",
-        voice: "marin",
         instructions: VOICE_SYSTEM_PROMPT,
         tools: VOICE_TOOLS,
         tool_choice: "auto",
-        input_audio_transcription: { model: "whisper-1" },
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.4,
-          prefix_padding_ms: 500,
-          silence_duration_ms: 1500,
-        },
+        // Note: voice, input_audio_transcription and turn_detection must be sent
+        // as a session.update event over the data channel after connection.
       });
 
       const formData = new FormData();
