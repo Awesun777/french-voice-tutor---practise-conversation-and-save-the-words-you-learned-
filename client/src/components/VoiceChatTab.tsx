@@ -379,17 +379,7 @@ export default function VoiceChatTab() {
       const { id } = await createSessionMutation.mutateAsync();
       setSessionId(id);
 
-      // 2. Get ephemeral token from our server
-      const tokenResp = await fetch("/api/voice/session", { method: "POST" });
-      if (!tokenResp.ok) {
-        const err = await tokenResp.json();
-        throw new Error(err.error ?? "Failed to get session token");
-      }
-      const tokenData = await tokenResp.json();
-      const ephemeralKey = tokenData.value;
-      if (!ephemeralKey) throw new Error("No ephemeral key in response");
-
-      // 3. Set up WebRTC
+      // 2. Set up WebRTC
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
 
@@ -464,19 +454,17 @@ export default function VoiceChatTab() {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      // Send offer to OpenAI Realtime (GA API)
-      const sdpResp = await fetch(
-        "https://api.openai.com/v1/realtime/calls",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${ephemeralKey}`,
-            "Content-Type": "application/sdp",
-          },
-          body: offer.sdp,
-        }
-      );
-      if (!sdpResp.ok) throw new Error("WebRTC SDP exchange failed");
+      // Send offer to our server which relays to OpenAI Realtime unified interface
+      // (server-relay SDP: our server POSTs multipart FormData to OpenAI /v1/realtime/calls)
+      const sdpResp = await fetch("/api/voice/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sdp: offer.sdp }),
+      });
+      if (!sdpResp.ok) {
+        const errData = await sdpResp.json().catch(() => ({}));
+        throw new Error(errData.error ?? "WebRTC SDP exchange failed");
+      }
       const answerSdp = await sdpResp.text();
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 

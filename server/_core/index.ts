@@ -69,47 +69,93 @@ async function startServer() {
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
 
-  // ── OpenAI Realtime ephemeral token — POST /api/voice/session ──────────────
-  // The browser calls this to get a short-lived token, then connects directly
-  // to OpenAI Realtime via WebRTC (low-latency, no audio goes through our server).
-  app.post("/api/voice/session", async (req, res) => {
+  // ── OpenAI Realtime unified interface — POST /api/voice/connect ──────────────
+  // Unified interface: browser sends its SDP offer to our server, which relays it
+  // to OpenAI /v1/realtime/calls using the standard API key (not ephemeral token).
+  // Audio still streams directly between browser and OpenAI — only the SDP
+  // handshake goes through our server, so latency is identical to the direct flow.
+  // This approach properly supports the data channel for transcript events.
+  app.post("/api/voice/connect", async (req, res) => {
     try {
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
         res.status(500).json({ error: "OpenAI API key not configured" });
         return;
       }
+
+      // The browser sends the raw SDP offer as plain text
+      const sdpOffer = req.body?.sdp;
+      if (!sdpOffer) {
+        res.status(400).json({ error: "Missing SDP offer" });
+        return;
+      }
+
+      // Build multipart FormData with sdp and session fields
+      // (unified interface requires multipart/form-data, NOT raw SDP body)
       const sessionConfig = JSON.stringify({
-        session: {
-          type: "realtime",
-          model: "gpt-realtime-2",
-          audio: { output: { voice: "marin" } },
-          instructions: VOICE_SYSTEM_PROMPT,
-          tools: VOICE_TOOLS,
-          tool_choice: "auto",
-          // Note: input_audio_transcription and turn_detection must be sent
-          // via session.update over the data channel after WebRTC connection,
-          // as the client_secrets endpoint does not support them.
+        model: "gpt-realtime-2",
+        voice: "marin",
+        instructions: VOICE_SYSTEM_PROMPT,
+        tools: VOICE_TOOLS,
+        tool_choice: "auto",
+        input_audio_transcription: { model: "whisper-1" },
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.4,
+          prefix_padding_ms: 500,
+          silence_duration_ms: 1500,
         },
       });
-      const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: sessionConfig,
-      });
+
+      const formData = new FormData();
+      // Send as plain string fields (not file uploads) — OpenAI expects field names "sdp" and "session"
+      formData.append("sdp", sdpOffer);
+      formData.append("session", sessionConfig);
+
+      // Relay SDP offer to OpenAI Realtime unified interface
+      const response = await fetch(
+        `https://api.openai.com/v1/realtime/calls`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: formData,
+        }
+      );
+
       if (!response.ok) {
         const err = await response.text();
+        console.error("[Voice] OpenAI SDP relay error:", response.status, err);
         res.status(response.status).json({ error: err });
         return;
       }
-      const data = await response.json();
-      res.json(data);
+
+      const answerSdp = await response.text();
+      res.setHeader("Content-Type", "application/sdp");
+      res.send(answerSdp);
     } catch (e: any) {
+      console.error("[Voice] SDP relay exception:", e);
       res.status(500).json({ error: e.message ?? "Unknown error" });
     }
+  });
+
+  // ── Session config endpoint — POST /api/voice/session-config ─────────────────
+  // Returns the session config (instructions, tools, VAD, transcription) so the
+  // browser can send it as a session.update event over the data channel.
+  app.post("/api/voice/session-config", (_req, res) => {
+    res.json({
+      instructions: VOICE_SYSTEM_PROMPT,
+      tools: VOICE_TOOLS,
+      tool_choice: "auto",
+      input_audio_transcription: { model: "whisper-1" },
+      turn_detection: {
+        type: "server_vad",
+        threshold: 0.4,
+        prefix_padding_ms: 500,
+        silence_duration_ms: 1500,
+      },
+    });
   });
 
   // tRPC API
