@@ -884,6 +884,46 @@ The user is asking about this specific word/phrase. Answer in the context of thi
         return { summary };
       }),
 
+    // Summarize older conversation turns to reduce context window size
+    // Called by the client every 10 turns; returns a compact summary string
+    // that the client injects as a system message and deletes the old raw turns
+    summarizeContext: protectedProcedure
+      .input(z.object({
+        turns: z.array(z.object({
+          role: z.enum(["user", "assistant"]),
+          text: z.string(),
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        const dialogue = input.turns
+          .map((t) => `${t.role === "user" ? "Student" : "Romain"}: ${t.text}`)
+          .join("\n");
+        try {
+          const resp = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are a concise French tutoring session summarizer. " +
+                  "Compress the provided conversation turns into a compact memory note (2-4 sentences max). " +
+                  "Include: topics discussed, vocabulary introduced, grammar points covered, and any errors the student made. " +
+                  "Write in English. Be specific but brief — this note will be injected into an ongoing AI context window to save tokens.",
+              },
+              {
+                role: "user",
+                content: `Summarize these conversation turns into a compact memory note:\n\n${dialogue}`,
+              },
+            ],
+          });
+          const raw = resp.choices[0].message.content ?? "";
+          const summary = typeof raw === "string" ? raw.trim() : JSON.stringify(raw);
+          return { summary };
+        } catch {
+          // If summarization fails, return a minimal fallback so the client can still prune
+          return { summary: `[Earlier conversation: ${input.turns.length} turns covering French practice.]` };
+        }
+      }),
+
     // List all past sessions for the user
     list: protectedProcedure.query(async ({ ctx }) => {
       const sessions = await getVoiceSessions(ctx.user.id);

@@ -182,3 +182,11 @@
 - [x] Voice Chat: show real-time streaming transcript of AI speech (delta events)
 - [x] Voice Chat: increase VAD silence threshold so slow French speakers are not interrupted
 - [x] Voice Chat: rename tutor from Amélie to Romain
+
+## Voice Chat Context Optimization (Round 16)
+- [x] Add voice.summarizeContext tRPC procedure: accepts array of transcript turns, returns compact summary string using invokeLLM
+- [x] Track conversation turns in VoiceChatTab (array of {role, text} objects built from transcript events)
+- [x] Every 10 turns, call voice.summarizeContext with the oldest turns (all but last 10)
+- [x] Inject summary as a system message via data channel conversation.item.create
+- [x] Delete the old raw turns from Realtime context via conversation.item.delete events
+- [x] Show a subtle "Context summarized" indicator in the UI when summarization runs

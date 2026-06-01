@@ -8,12 +8,12 @@
  *  4. A DataChannel carries JSON events: transcripts, tool calls (save_vocab), etc.
  *  5. "End Session" persists the transcript + triggers an AI summary
  *
- * Changes in this version:
- *  - Renamed tutor to Romain
- *  - Added Pause/Resume button (mutes mic + pauses AI audio)
- *  - End + Pause buttons centered at bottom of screen
- *  - Real-time streaming transcript: AI text appears word-by-word as it speaks
- *  - Increased VAD silence threshold via session update event after connection
+ * Context optimization (Round 16):
+ *  - Tracks conversation turns (completed user + assistant exchanges)
+ *  - Every SUMMARIZE_EVERY turns, calls voiceSession.summarizeContext on the server
+ *  - Injects the summary as a system message into the Realtime context via data channel
+ *  - Deletes the old raw turns from the Realtime context to cap token growth
+ *  - Shows a subtle "Context summarized" badge in the UI when pruning runs
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -33,7 +33,14 @@ import {
   Clock,
   Pause,
   Play,
+  Sparkles,
 } from "lucide-react";
+
+// ─── Constants ─────────────────────────────────────────────────────────────────
+/** Summarize and prune after this many completed turns (user + assistant = 1 turn) */
+const SUMMARIZE_EVERY = 10;
+/** Keep this many recent raw turns after pruning */
+const KEEP_RECENT = 10;
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface TranscriptLine {
@@ -42,6 +49,8 @@ interface TranscriptLine {
   timestamp: number;
   /** id used to update in-progress streaming lines */
   id?: string;
+  /** Realtime conversation item ID — needed to delete from Realtime context */
+  itemId?: string;
 }
 
 interface SavedWord {
@@ -179,9 +188,19 @@ export default function VoiceChatTab() {
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [endedSummary, setEndedSummary] = useState<string | null>(null);
   const [showPastSessions, setShowPastSessions] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [summarizeCount, setSummarizeCount] = useState(0);
 
   // Track the in-progress AI streaming line (delta accumulation)
   const streamingLineIdRef = useRef<string | null>(null);
+
+  // ── Context pruning state ────────────────────────────────────────────────────
+  // completedTurns: array of finalized (non-streaming) transcript lines with itemIds
+  // turnsSinceLastSummarize: count of completed turns since last summarization
+  // itemIdMap: maps our local line id → OpenAI Realtime conversation item id
+  const completedTurnsRef = useRef<TranscriptLine[]>([]);
+  const turnsSinceLastSummarizeRef = useRef(0);
+  const isSummarizingRef = useRef(false); // prevent concurrent summarization
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -196,6 +215,7 @@ export default function VoiceChatTab() {
   const createSessionMutation = trpc.voiceSession.create.useMutation();
   const saveWordMutation = trpc.voiceSession.saveWord.useMutation();
   const endSessionMutation = trpc.voiceSession.end.useMutation();
+  const summarizeContextMutation = trpc.voiceSession.summarizeContext.useMutation();
   const { data: pastSessions = [], refetch: refetchSessions } = trpc.voiceSession.list.useQuery(
     undefined,
     { enabled: showPastSessions }
@@ -206,6 +226,96 @@ export default function VoiceChatTab() {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript]);
 
+  // ── Periodic summarization ───────────────────────────────────────────────────
+  /**
+   * Called after each completed turn (user speech done OR assistant response done).
+   * When turnsSinceLastSummarize reaches SUMMARIZE_EVERY:
+   *  1. Calls the server to summarize the oldest turns (all except the last KEEP_RECENT)
+   *  2. Injects the summary as a system message into the Realtime context
+   *  3. Deletes the old raw turns from the Realtime context via conversation.item.delete
+   *  4. Resets the counter
+   */
+  const maybeSummarize = useCallback(async () => {
+    turnsSinceLastSummarizeRef.current += 1;
+
+    if (
+      turnsSinceLastSummarizeRef.current < SUMMARIZE_EVERY ||
+      isSummarizingRef.current ||
+      !dcRef.current ||
+      dcRef.current.readyState !== "open"
+    ) {
+      return;
+    }
+
+    const allTurns = completedTurnsRef.current;
+    if (allTurns.length <= KEEP_RECENT) return; // not enough turns yet
+
+    const turnsToSummarize = allTurns.slice(0, allTurns.length - KEEP_RECENT);
+    if (turnsToSummarize.length === 0) return;
+
+    isSummarizingRef.current = true;
+    setSummarizing(true);
+
+    try {
+      // 1. Ask server to summarize the old turns
+      const { summary } = await summarizeContextMutation.mutateAsync({
+        turns: turnsToSummarize.map((t) => ({ role: t.role, text: t.text })),
+      });
+
+      const dc = dcRef.current;
+      if (!dc || dc.readyState !== "open") return;
+
+      // 2. Inject summary as a system message into the Realtime context
+      dc.send(JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: `[Earlier conversation summary — ${turnsToSummarize.length} turns]: ${summary}`,
+            },
+          ],
+        },
+      }));
+
+      // 3. Delete the old raw turns from the Realtime context
+      // We delete by itemId if available; skip any without itemId (they were never in Realtime context)
+      for (const turn of turnsToSummarize) {
+        if (turn.itemId) {
+          dc.send(JSON.stringify({
+            type: "conversation.item.delete",
+            item_id: turn.itemId,
+          }));
+        }
+      }
+
+      // 4. Update local state: remove summarized turns from completedTurnsRef
+      completedTurnsRef.current = allTurns.slice(allTurns.length - KEEP_RECENT);
+      turnsSinceLastSummarizeRef.current = 0;
+
+      // Show a subtle indicator in the transcript
+      setTranscript((prev) => [
+        ...prev,
+        {
+          role: "assistant" as const,
+          text: `✦ Context summarized (${turnsToSummarize.length} earlier turns compressed)`,
+          timestamp: Date.now(),
+          id: `summary-note-${Date.now()}`,
+        },
+      ]);
+
+      setSummarizeCount((c) => c + 1);
+      console.log(`[Context] Summarized ${turnsToSummarize.length} turns, kept ${KEEP_RECENT} recent`);
+    } catch (err) {
+      console.warn("[Context] Summarization failed, skipping prune:", err);
+    } finally {
+      isSummarizingRef.current = false;
+      setSummarizing(false);
+    }
+  }, [summarizeContextMutation]);
+
   // Handle DataChannel events from OpenAI Realtime
   const handleDataChannelMessage = useCallback((event: MessageEvent) => {
     try {
@@ -215,23 +325,27 @@ export default function VoiceChatTab() {
       console.log("[Realtime event]", msg.type, msg);
 
       // ── User speech transcript ──────────────────────────────────────────────
-      // GA API: conversation.item.input_audio_transcription.completed
-      // Also handle delta for live user transcript streaming
       if (
         msg.type === "conversation.item.input_audio_transcription.completed" ||
         msg.type === "conversation.item.input_audio_transcription.done"
       ) {
         const text = (msg.transcript ?? msg.text ?? "").trim();
         if (text) {
+          const itemId: string | undefined = msg.item_id;
+          const newLine: TranscriptLine = { role: "user", text, timestamp: Date.now(), itemId };
           setTranscript((prev) => {
             // Replace any partial user line or append new one
             const lastUser = [...prev].reverse().find((l) => l.role === "user" && l.id?.startsWith("user-stream"));
             if (lastUser) {
-              return prev.map((l) => l.id === lastUser.id ? { ...l, text, id: undefined } : l);
+              return prev.map((l) => l.id === lastUser.id ? { ...l, text, id: undefined, itemId } : l);
             }
-            return [...prev, { role: "user", text, timestamp: Date.now() }];
+            return [...prev, newLine];
           });
+          // Track completed user turn for summarization
+          completedTurnsRef.current = [...completedTurnsRef.current, newLine];
           setUserSpeaking(false);
+          // Check if we should summarize after user turn completes
+          maybeSummarize();
         }
       }
 
@@ -254,9 +368,6 @@ export default function VoiceChatTab() {
       if (msg.type === "input_audio_buffer.speech_stopped") setUserSpeaking(false);
 
       // ── AI audio state ──────────────────────────────────────────────────────
-      // GA API uses response.output_audio.delta / .done
-      // Beta API used response.audio.delta / .done
-      // Handle both for compatibility
       if (
         msg.type === "response.output_audio.delta" ||
         msg.type === "response.audio.delta"
@@ -268,9 +379,6 @@ export default function VoiceChatTab() {
       ) setAiSpeaking(false);
 
       // ── Real-time AI transcript streaming ──────────────────────────────────
-      // GA API: response.output_audio_transcript.delta (fires word-by-word as AI speaks)
-      // Beta API used: response.audio_transcript.delta
-      // Handle both for compatibility
       const isAiTranscriptDelta =
         msg.type === "response.output_audio_transcript.delta" ||
         msg.type === "response.audio_transcript.delta";
@@ -283,7 +391,6 @@ export default function VoiceChatTab() {
         if (!delta) return;
 
         if (!streamingLineIdRef.current) {
-          // Start a new streaming line
           const lineId = `stream-${Date.now()}`;
           streamingLineIdRef.current = lineId;
           setTranscript((prev) => [
@@ -291,7 +398,6 @@ export default function VoiceChatTab() {
             { role: "assistant", text: delta, timestamp: Date.now(), id: lineId },
           ]);
         } else {
-          // Append delta to the existing streaming line
           const lineId = streamingLineIdRef.current;
           setTranscript((prev) =>
             prev.map((line) =>
@@ -301,9 +407,29 @@ export default function VoiceChatTab() {
         }
       }
 
-      // Finalize the streaming line
+      // Finalize the streaming line and track it as a completed turn
       if (isAiTranscriptDone) {
+        const finalText = msg.transcript ?? "";
+        const itemId: string | undefined = msg.item_id;
+        const lineId = streamingLineIdRef.current;
         streamingLineIdRef.current = null;
+
+        if (lineId) {
+          // Attach itemId to the finalized line so we can delete it later
+          setTranscript((prev) =>
+            prev.map((line) =>
+              line.id === lineId ? { ...line, id: undefined, itemId } : line
+            )
+          );
+          // Track completed assistant turn
+          const text = finalText || (transcript.find((l) => l.id === lineId)?.text ?? "");
+          if (text) {
+            const completedLine: TranscriptLine = { role: "assistant", text, timestamp: Date.now(), itemId };
+            completedTurnsRef.current = [...completedTurnsRef.current, completedLine];
+            // Check if we should summarize after assistant turn completes
+            maybeSummarize();
+          }
+        }
       }
 
       // Fallback: if no delta events, capture full text from response.output_item.done
@@ -313,12 +439,16 @@ export default function VoiceChatTab() {
           for (const c of item.content) {
             const text = c.transcript ?? c.text ?? "";
             if (text && !streamingLineIdRef.current) {
-              // Only add if we didn't already stream it via deltas
+              const itemId: string | undefined = item.id;
               setTranscript((prev) => {
                 const lastAI = [...prev].reverse().find((l) => l.role === "assistant");
                 if (lastAI && lastAI.text === text) return prev; // already there
-                return [...prev, { role: "assistant", text, timestamp: Date.now() }];
+                return [...prev, { role: "assistant", text, timestamp: Date.now(), itemId }];
               });
+              // Track as completed turn
+              const completedLine: TranscriptLine = { role: "assistant", text, timestamp: Date.now(), itemId };
+              completedTurnsRef.current = [...completedTurnsRef.current, completedLine];
+              maybeSummarize();
             }
           }
         }
@@ -365,7 +495,7 @@ export default function VoiceChatTab() {
     } catch {
       // ignore non-JSON messages
     }
-  }, [saveWordMutation, utils]);
+  }, [saveWordMutation, utils, maybeSummarize, transcript]);
 
   const startSession = async () => {
     try {
@@ -373,7 +503,11 @@ export default function VoiceChatTab() {
       setTranscript([]);
       setSavedWords([]);
       setEndedSummary(null);
+      setSummarizeCount(0);
       streamingLineIdRef.current = null;
+      completedTurnsRef.current = [];
+      turnsSinceLastSummarizeRef.current = 0;
+      isSummarizingRef.current = false;
 
       // 1. Create a session record in our DB
       const { id } = await createSessionMutation.mutateAsync();
@@ -433,9 +567,9 @@ export default function VoiceChatTab() {
             // Reduces false triggers from coughs, background noise, breathing
             turn_detection: {
               type: "server_vad",
-              threshold: 0.6,      // 0.4 → 0.6: ignores quieter sounds like coughs
-              prefix_padding_ms: 800,  // 500 → 800ms: more buffer before speech is detected
-              silence_duration_ms: 2000, // 1500 → 2000ms: waits longer before end-of-turn
+              threshold: 0.6,
+              prefix_padding_ms: 800,
+              silence_duration_ms: 2000,
             },
           },
         }));
@@ -457,7 +591,6 @@ export default function VoiceChatTab() {
       await pc.setLocalDescription(offer);
 
       // Send offer to our server which relays to OpenAI Realtime unified interface
-      // (server-relay SDP: our server POSTs multipart FormData to OpenAI /v1/realtime/calls)
       const sdpResp = await fetch("/api/voice/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -497,9 +630,13 @@ export default function VoiceChatTab() {
     setSessionState("ending");
     cleanupWebRTC();
     try {
+      // Filter out internal context-summary UI notes before persisting
+      const persistableTranscript = transcript.filter(
+        (l) => !l.id?.startsWith("summary-note-")
+      );
       const { summary } = await endSessionMutation.mutateAsync({
         sessionId,
-        transcript,
+        transcript: persistableTranscript,
         savedWords,
       });
       setEndedSummary(summary);
@@ -513,12 +650,10 @@ export default function VoiceChatTab() {
 
   const togglePause = () => {
     if (sessionState === "active") {
-      // Pause: mute mic tracks + pause AI audio playback
       localStreamRef.current?.getTracks().forEach((t) => { t.enabled = false; });
       if (audioRef.current) audioRef.current.pause();
       setSessionState("paused");
     } else if (sessionState === "paused") {
-      // Resume: unmute mic + resume AI audio
       localStreamRef.current?.getTracks().forEach((t) => { t.enabled = true; });
       if (audioRef.current) audioRef.current.play().catch(() => {});
       setSessionState("active");
@@ -548,6 +683,18 @@ export default function VoiceChatTab() {
             <span className="flex items-center gap-1 text-xs text-amber-400 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
               Paused
+            </span>
+          )}
+          {summarizing && (
+            <span className="flex items-center gap-1 text-xs text-violet-400 font-medium animate-pulse">
+              <Sparkles className="w-3 h-3" />
+              Compressing…
+            </span>
+          )}
+          {!summarizing && summarizeCount > 0 && isSessionLive && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground" title={`Context has been summarized ${summarizeCount} time${summarizeCount > 1 ? "s" : ""} to keep responses fast`}>
+              <Sparkles className="w-3 h-3 text-violet-400" />
+              <span className="text-violet-400">{summarizeCount}×</span>
             </span>
           )}
         </div>
@@ -654,34 +801,49 @@ export default function VoiceChatTab() {
               {transcript.length === 0 && (
                 <p className="text-center text-xs text-muted-foreground py-4">Conversation will appear here…</p>
               )}
-              {transcript.map((line, i) => (
-                <div
-                  key={line.id ?? i}
-                  className={cn(
-                    "flex gap-2 items-start",
-                    line.role === "user" ? "flex-row-reverse" : "flex-row"
-                  )}
-                >
-                  <div className={cn(
-                    "w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold mt-0.5",
-                    line.role === "user" ? "bg-secondary text-foreground" : "bg-primary/20 text-primary"
-                  )}>
-                    {line.role === "user" ? "Me" : "R"}
-                  </div>
-                  <div className={cn(
-                    "max-w-[75%] px-3 py-2 rounded-2xl text-sm leading-relaxed",
-                    line.role === "user"
-                      ? "bg-secondary text-foreground rounded-tr-sm"
-                      : "bg-card border border-border text-foreground rounded-tl-sm"
-                  )}>
-                    {line.text}
-                    {/* Blinking cursor for the in-progress streaming line */}
-                    {line.id && streamingLineIdRef.current === line.id && (
-                      <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-middle" />
+              {transcript.map((line, i) => {
+                // Summary note line — render as a centered system note
+                if (line.id?.startsWith("summary-note-")) {
+                  return (
+                    <div key={line.id ?? i} className="flex items-center gap-2 py-1">
+                      <div className="flex-1 h-px bg-border" />
+                      <span className="flex items-center gap-1 text-[10px] text-violet-400 font-medium whitespace-nowrap">
+                        <Sparkles className="w-3 h-3" />
+                        {line.text.replace("✦ ", "")}
+                      </span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={line.id ?? i}
+                    className={cn(
+                      "flex gap-2 items-start",
+                      line.role === "user" ? "flex-row-reverse" : "flex-row"
                     )}
+                  >
+                    <div className={cn(
+                      "w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold mt-0.5",
+                      line.role === "user" ? "bg-secondary text-foreground" : "bg-primary/20 text-primary"
+                    )}>
+                      {line.role === "user" ? "Me" : "R"}
+                    </div>
+                    <div className={cn(
+                      "max-w-[75%] px-3 py-2 rounded-2xl text-sm leading-relaxed",
+                      line.role === "user"
+                        ? "bg-secondary text-foreground rounded-tr-sm"
+                        : "bg-card border border-border text-foreground rounded-tl-sm"
+                    )}>
+                      {line.text}
+                      {/* Blinking cursor for the in-progress streaming line */}
+                      {line.id && streamingLineIdRef.current === line.id && (
+                        <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-middle" />
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               <div ref={transcriptEndRef} />
             </div>
 
@@ -771,14 +933,16 @@ export default function VoiceChatTab() {
 
             {transcript.length > 0 && (
               <div className="w-full bg-card border border-border rounded-xl p-4">
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Transcript ({transcript.length} lines)</p>
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Transcript ({transcript.filter(l => !l.id?.startsWith("summary-note-")).length} lines)</p>
                 <div className="space-y-1 max-h-48 overflow-y-auto">
-                  {transcript.map((line, i) => (
-                    <p key={i} className={cn("text-xs", line.role === "user" ? "text-foreground" : "text-primary")}>
-                      <span className="font-semibold">{line.role === "user" ? "You" : "Romain"}: </span>
-                      {line.text}
-                    </p>
-                  ))}
+                  {transcript
+                    .filter((line) => !line.id?.startsWith("summary-note-"))
+                    .map((line, i) => (
+                      <p key={i} className={cn("text-xs", line.role === "user" ? "text-foreground" : "text-primary")}>
+                        <span className="font-semibold">{line.role === "user" ? "You" : "Romain"}: </span>
+                        {line.text}
+                      </p>
+                    ))}
                 </div>
               </div>
             )}
@@ -790,7 +954,11 @@ export default function VoiceChatTab() {
                 setSavedWords([]);
                 setEndedSummary(null);
                 setSessionId(null);
+                setSummarizeCount(0);
                 streamingLineIdRef.current = null;
+                completedTurnsRef.current = [];
+                turnsSinceLastSummarizeRef.current = 0;
+                isSummarizingRef.current = false;
               }}
               className="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl font-semibold transition-all"
             >
