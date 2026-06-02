@@ -95,3 +95,14 @@ export const voiceSessions = mysqlTable("voice_sessions", {
 });
 
 export type VoiceSession = typeof voiceSessions.$inferSelect;
+
+/**
+ * Shared dictionary cache — stores completed LLM lookup results keyed by
+ * normalized term so any user's first lookup populates the cache for all.
+ */
+export const dictCache = mysqlTable("dict_cache", {
+  termKey:   varchar("term_key", { length: 512 }).primaryKey(),
+  entryJson: text("entry_json").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export type DictCacheEntry = typeof dictCache.$inferSelect;

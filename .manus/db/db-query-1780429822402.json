@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `dict_cache` (\n  `term_key` varchar(512) NOT NULL,\n  `entry_json` text NOT NULL,\n  `created_at` bigint NOT NULL,\n  CONSTRAINT `dict_cache_term_key` PRIMARY KEY(`term_key`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2tViCNPNqR8WkNK.5a13a40b8b26 --database 8baQdh3xy5GA4FRvuUk9AV --execute CREATE TABLE IF NOT EXISTS `dict_cache` (\n  `term_key` varchar(512) NOT NULL,\n  `entry_json` text NOT NULL,\n  `created_at` bigint NOT NULL,\n  CONSTRAINT `dict_cache_term_key` PRIMARY KEY(`term_key`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 384
+}

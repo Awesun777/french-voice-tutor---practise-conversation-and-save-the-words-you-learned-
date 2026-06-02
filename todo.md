@@ -217,3 +217,11 @@
 - [x] Anna pause: use conversation.setMicMuted(true/false) + setVolume(0/1) for reliable pause/resume
 - [x] Anna transcript: only show Anna's speech in the live transcript (filter out user lines during active session)
 - [x] Register save_vocab tool schema on Anna's ElevenLabs agent via API (PATCH /v1/convai/agents/{agent_id} prompt.tools)
+
+## OpenAI TTS & Dict Cache (Round 21)
+- [x] Add dict_cache table to drizzle/schema.ts (term PK, entry JSON, createdAt)
+- [x] Run migration and apply SQL via webdev_execute_sql
+- [x] Update dictionary.lookup procedure to check dict_cache first, write to cache on LLM hit
+- [x] Add voice.tts tRPC protectedProcedure: accepts text string, calls OpenAI tts-1 (nova voice, 0.9x speed), returns base64 MP3
+- [x] Replace Web Speech API in client/src/lib/pronounce.ts with tRPC call + client-side Map cache (term → blob URL)
+- [x] Verify PronounceButton works on Dictionary, Flashcards, My Library, and Quiz pages (same hook API, no component changes needed)

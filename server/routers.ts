@@ -7,6 +7,9 @@ import { transcribeAudio } from "./_core/voiceTranscription";
 import { storagePut } from "./storage";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { dictCache as dictCacheTable } from "../drizzle/schema";
+import { eq } from "drizzle-orm";
+import { getDb } from "./db";
 import {
   addVocabEntries,
   addVocabEntry,
@@ -27,24 +30,34 @@ import {
   deleteVocabGroup,
 } from "./db";
 
-// ─── Dictionary search cache (in-memory, server-side) ─────────────────────────
-// Keyed by normalized term. Evicted after 24 hours to keep memory bounded.
-const dictCache = new Map<string, { result: unknown; ts: number }>();
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 h
+// ─── Dictionary search cache (DB-persisted + in-memory L1) ───────────────────
+// L1: in-memory Map for ultra-fast repeated lookups within the same process.
+// L2: dict_cache table — survives redeploys, shared across all users.
+const memCache = new Map<string, unknown>();
 
-function getCached(key: string): unknown | null {
-  const entry = dictCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > CACHE_TTL) { dictCache.delete(key); return null; }
-  return entry.result;
+async function getCached(key: string): Promise<unknown | null> {
+  if (memCache.has(key)) return memCache.get(key)!;
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const rows = await db.select().from(dictCacheTable).where(eq(dictCacheTable.termKey, key));
+    if (rows.length > 0) {
+      const result = JSON.parse(rows[0].entryJson);
+      memCache.set(key, result); // warm L1
+      return result;
+    }
+  } catch { /* non-fatal */ }
+  return null;
 }
-function setCache(key: string, result: unknown) {
-  // Keep cache bounded to 500 entries (LRU-lite: just delete oldest on overflow)
-  if (dictCache.size >= 500) {
-    const firstKey = dictCache.keys().next().value;
-    if (firstKey) dictCache.delete(firstKey);
-  }
-  dictCache.set(key, { result, ts: Date.now() });
+async function setCache(key: string, result: unknown) {
+  memCache.set(key, result);
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db.insert(dictCacheTable)
+      .values({ termKey: key, entryJson: JSON.stringify(result), createdAt: Date.now() })
+      .onDuplicateKeyUpdate({ set: { entryJson: JSON.stringify(result), createdAt: Date.now() } });
+  } catch { /* non-fatal — cache write failure should not break the response */ }
 }
 
 // ─── AI import cache (per-chunk) ──────────────────────────────────────────────
@@ -97,7 +110,7 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
       .input(z.object({ term: z.string().min(1).max(300) }))
       .mutation(async ({ input }) => {
         const key = input.term.toLowerCase().trim();
-        const cached = getCached(key);
+        const cached = await getCached(key);
         if (cached) return cached;
 
         const type = detectInputType(input.term);
@@ -286,7 +299,7 @@ If no plausible suggestion exists, return {"suggestions":[]}.`,
         if (result.type !== "word" && result.type !== "phrase" && result.type !== "question" && result.type !== "error") {
           result.type = type; // fall back to the detected input type
         }
-        setCache(key, result);
+        await setCache(key, result);
         return result;
       }),
   }),
@@ -794,6 +807,32 @@ The user is asking about this specific word/phrase. Answer in the context of thi
   }),
 
   voice: router({
+    // OpenAI TTS: accepts French text, returns base64-encoded MP3 audio
+    tts: protectedProcedure
+      .input(z.object({ text: z.string().min(1).max(500) }))
+      .mutation(async ({ input }) => {
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'OpenAI not configured' });
+        const resp = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'tts-1',
+            input: input.text,
+            voice: 'nova',
+            response_format: 'mp3',
+            speed: 0.9,
+          }),
+        });
+        if (!resp.ok) {
+          const err = await resp.text();
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `TTS error: ${err}` });
+        }
+        const arrayBuffer = await resp.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+        return { base64, mimeType: 'audio/mpeg' };
+      }),
+
     transcribe: protectedProcedure
       .input(z.object({ audioUrl: z.string().url(), targetTerm: z.string() }))
       .mutation(async ({ input }) => {

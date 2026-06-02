@@ -1,87 +1,31 @@
 /**
- * Robust French pronunciation using the Web Speech API.
+ * French pronunciation using OpenAI TTS (tts-1) via a server-side tRPC call.
  *
- * Fixes the well-known Chrome SpeechSynthesis freeze bug:
- *   - Chrome's synthesis engine silently stops after ~15 minutes of page activity.
- *   - The tab shows the speaker icon but no audio plays.
- *   - Fix: cancel → pause → resume → setTimeout → speak, which resets Chrome's engine.
- *
- * Also selects the best available French voice (fr-FR preferred, fr-* fallback).
+ * Architecture:
+ *   - First call for a given text: calls voice.tts mutation → receives base64 MP3
+ *     → decodes to a Blob URL → plays via HTMLAudioElement.
+ *   - Subsequent calls for the same text: plays instantly from the in-memory
+ *     blob URL cache (Map<text, blobUrl>).
+ *   - Falls back to Web Speech API if the tRPC call fails (network error, etc.).
  *
  * Exports:
- *   - pronounce(text)          — fire-and-forget, no state tracking
- *   - usePronounce()           — React hook that tracks loading/speaking state per utterance
+ *   - usePronounce()  — React hook that tracks loading/speaking state per utterance
  */
 
 import { useState, useCallback, useRef } from "react";
+import { trpc } from "./trpc";
 
-let _frenchVoice: SpeechSynthesisVoice | null = null;
-let _voicesLoaded = false;
+// Client-side blob URL cache — persists for the lifetime of the browser tab
+const audioCache = new Map<string, string>(); // text → blob URL
 
-function loadFrenchVoice(): SpeechSynthesisVoice | null {
-  if (_voicesLoaded) return _frenchVoice;
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length === 0) return null; // not ready yet
+let _currentAudio: HTMLAudioElement | null = null;
 
-  _frenchVoice =
-    voices.find((v) => v.lang === "fr-FR") ??
-    voices.find((v) => v.lang.startsWith("fr")) ??
-    null;
-  _voicesLoaded = true;
-  return _frenchVoice;
-}
-
-// Pre-load voices as soon as they become available
-if (typeof window !== "undefined" && window.speechSynthesis) {
-  window.speechSynthesis.onvoiceschanged = () => {
-    _voicesLoaded = false;
-    loadFrenchVoice();
-  };
-}
-
-function _speak(
-  text: string,
-  onStart?: () => void,
-  onEnd?: () => void,
-  onError?: () => void
-): void {
-  if (!window.speechSynthesis) {
-    onError?.();
-    return;
+function stopCurrent() {
+  if (_currentAudio) {
+    _currentAudio.pause();
+    _currentAudio.src = "";
+    _currentAudio = null;
   }
-
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.pause();
-  window.speechSynthesis.resume();
-
-  setTimeout(() => {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "fr-FR";
-    u.rate = 0.9;
-
-    const voice = loadFrenchVoice();
-    if (voice) u.voice = voice;
-
-    const keepAlive = setInterval(() => {
-      if (!window.speechSynthesis.speaking) {
-        clearInterval(keepAlive);
-        return;
-      }
-      window.speechSynthesis.pause();
-      window.speechSynthesis.resume();
-    }, 10000);
-
-    u.onstart = () => onStart?.();
-    u.onend = () => { clearInterval(keepAlive); onEnd?.(); };
-    u.onerror = () => { clearInterval(keepAlive); onError?.(); };
-
-    window.speechSynthesis.speak(u);
-  }, 50);
-}
-
-/** Fire-and-forget — no state tracking */
-export function pronounce(text: string): void {
-  _speak(text);
 }
 
 export type PronounceState = "idle" | "loading" | "speaking";
@@ -99,42 +43,120 @@ export function usePronounce() {
   const [activeText, setActiveText] = useState<string | null>(null);
   const pendingRef = useRef<string | null>(null);
 
-  const speak = useCallback((text: string) => {
-    // If already speaking this exact text, cancel (toggle off)
-    if (activeText === text && state !== "idle") {
-      window.speechSynthesis?.cancel();
-      setState("idle");
-      setActiveText(null);
-      pendingRef.current = null;
-      return;
-    }
+  const ttsMutation = trpc.voice.tts.useMutation();
 
-    pendingRef.current = text;
-    setState("loading");
-    setActiveText(text);
+  const speak = useCallback(
+    async (text: string) => {
+      // Toggle off if already speaking this text
+      if (activeText === text && state !== "idle") {
+        stopCurrent();
+        setState("idle");
+        setActiveText(null);
+        pendingRef.current = null;
+        return;
+      }
 
-    _speak(
-      text,
-      () => {
-        // onstart — only update if this is still the pending utterance
-        if (pendingRef.current === text) setState("speaking");
-      },
-      () => {
-        if (pendingRef.current === text) {
-          setState("idle");
-          setActiveText(null);
-          pendingRef.current = null;
-        }
-      },
-      () => {
-        if (pendingRef.current === text) {
-          setState("idle");
-          setActiveText(null);
-          pendingRef.current = null;
+      pendingRef.current = text;
+      setState("loading");
+      setActiveText(text);
+
+      // --- Try cache first ---
+      let blobUrl = audioCache.get(text);
+
+      if (!blobUrl) {
+        try {
+          const result = await ttsMutation.mutateAsync({ text });
+          // Decode base64 → Blob → Blob URL
+          const binary = atob(result.base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: result.mimeType });
+          blobUrl = URL.createObjectURL(blob);
+          audioCache.set(text, blobUrl);
+        } catch {
+          // Fallback to Web Speech API
+          if (pendingRef.current === text) {
+            setState("speaking");
+            const u = new SpeechSynthesisUtterance(text);
+            u.lang = "fr-FR";
+            u.rate = 0.9;
+            u.onend = () => {
+              if (pendingRef.current === text) {
+                setState("idle");
+                setActiveText(null);
+                pendingRef.current = null;
+              }
+            };
+            u.onerror = () => {
+              if (pendingRef.current === text) {
+                setState("idle");
+                setActiveText(null);
+                pendingRef.current = null;
+              }
+            };
+            window.speechSynthesis?.speak(u);
+          }
+          return;
         }
       }
-    );
-  }, [activeText, state]);
+
+      // Guard: user may have cancelled while we were fetching
+      if (pendingRef.current !== text) return;
+
+      stopCurrent();
+      const audio = new Audio(blobUrl);
+      _currentAudio = audio;
+
+      setState("speaking");
+
+      audio.onended = () => {
+        if (pendingRef.current === text) {
+          setState("idle");
+          setActiveText(null);
+          pendingRef.current = null;
+        }
+        _currentAudio = null;
+      };
+      audio.onerror = () => {
+        if (pendingRef.current === text) {
+          setState("idle");
+          setActiveText(null);
+          pendingRef.current = null;
+        }
+        _currentAudio = null;
+      };
+
+      audio.play().catch(() => {
+        if (pendingRef.current === text) {
+          setState("idle");
+          setActiveText(null);
+          pendingRef.current = null;
+        }
+        _currentAudio = null;
+      });
+    },
+    [activeText, state, ttsMutation]
+  );
 
   return { speak, state, activeText };
+}
+
+/** Fire-and-forget convenience wrapper (no state tracking) */
+export function pronounce(text: string): void {
+  const cached = audioCache.get(text);
+  if (cached) {
+    stopCurrent();
+    const audio = new Audio(cached);
+    _currentAudio = audio;
+    audio.onended = () => { _currentAudio = null; };
+    audio.play().catch(() => { _currentAudio = null; });
+    return;
+  }
+  // No cache — fall back to Web Speech API for fire-and-forget
+  if (window.speechSynthesis) {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "fr-FR";
+    u.rate = 0.9;
+    window.speechSynthesis.speak(u);
+  }
 }
