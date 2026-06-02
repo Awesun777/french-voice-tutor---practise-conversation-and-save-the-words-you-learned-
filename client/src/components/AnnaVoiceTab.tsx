@@ -51,27 +51,34 @@ function Waveform({ active, color }: { active: boolean; color: string }) {
   const bars = 20;
   return (
     <div className="flex items-center justify-center gap-0.5 h-8">
-      {Array.from({ length: bars }).map((_, i) => (
-        <div
-          key={i}
-          className="w-1 rounded-full transition-all duration-150"
-          style={{
-            backgroundColor: color,
-            height: active
-              ? `${20 + Math.abs(Math.sin((Date.now() / 200 + i) * 0.8)) * 80}%`
-              : "20%",
-            opacity: active ? 0.8 : 0.3,
-            animation: active ? `wave ${0.5 + (i % 5) * 0.1}s ease-in-out infinite alternate` : "none",
-            animationDelay: `${i * 0.05}s`,
-          }}
-        />
-      ))}
       <style>{`
-        @keyframes wave {
+        @keyframes anna-wave {
           from { height: 20%; }
-          to { height: ${active ? "90%" : "20%"}; }
+          to { height: 90%; }
         }
       `}</style>
+      {Array.from({ length: bars }).map((_, i) => {
+        const duration = `${0.5 + (i % 5) * 0.1}s`;
+        const delay = `${i * 0.05}s`;
+        return (
+          <div
+            key={i}
+            className="w-1 rounded-full"
+            style={{
+              backgroundColor: color,
+              height: "20%",
+              opacity: active ? 0.8 : 0.3,
+              transition: "opacity 0.15s",
+              animationName: active ? "anna-wave" : "none",
+              animationDuration: duration,
+              animationTimingFunction: "ease-in-out",
+              animationIterationCount: "infinite",
+              animationDirection: "alternate",
+              animationDelay: delay,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
