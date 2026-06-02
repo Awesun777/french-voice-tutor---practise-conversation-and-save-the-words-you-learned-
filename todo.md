@@ -225,3 +225,7 @@
 - [x] Add voice.tts tRPC protectedProcedure: accepts text string, calls OpenAI tts-1 (nova voice, 0.9x speed), returns base64 MP3
 - [x] Replace Web Speech API in client/src/lib/pronounce.ts with tRPC call + client-side Map cache (term → blob URL)
 - [x] Verify PronounceButton works on Dictionary, Flashcards, My Library, and Quiz pages (same hook API, no component changes needed)
+
+## Context Summarization Improvements (Round 23)
+- [ ] Romain: replace fixed 10-turn trigger with token-budget estimator (3,500 token threshold); summarize oldest 50% of raw turns when budget exceeded
+- [ ] Anna: add 10-turn summarization using conversation.sendContextualUpdate with the same voice.summarizeContext tRPC procedure

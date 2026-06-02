@@ -30,6 +30,12 @@ import {
   Sparkles,
 } from "lucide-react";
 
+// ─── Constants ─────────────────────────────────────────────────────────────────
+/** Summarize every N completed Anna turns and inject via sendContextualUpdate */
+const ANNA_SUMMARIZE_EVERY = 10;
+/** Always keep at least this many recent raw turns in local tracking */
+const ANNA_KEEP_RECENT = 10;
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface TranscriptLine {
   role: "user" | "assistant";
@@ -137,12 +143,20 @@ export function AnnaVoiceTab() {
   const userStreamIdRef = useRef<string | null>(null);
   const aiStreamIdRef = useRef<string | null>(null);
 
+  // ── Summarization state ────────────────────────────────────────────────────
+  const [summarizing, setSummarizing] = useState(false);
+  const [summarizeCount, setSummarizeCount] = useState(0);
+  const completedTurnsRef = useRef<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const annaTurnCountRef = useRef(0);
+  const isSummarizingRef = useRef(false);
+
   const utils = trpc.useUtils();
   const createSessionMutation = trpc.voiceSession.create.useMutation();
   const saveWordMutation = trpc.voiceSession.saveWord.useMutation();
   const endSessionMutation = trpc.voiceSession.end.useMutation();
   const annaSignedUrlMutation = trpc.voice.annaSignedUrl.useMutation();
   const webSearchMutation = trpc.voice.webSearch.useMutation();
+  const summarizeContextMutation = trpc.voiceSession.summarizeContext.useMutation();
   const { data: pastSessions = [], refetch: refetchSessions } = trpc.voiceSession.list.useQuery(
     undefined,
     { enabled: showPastSessions }
@@ -152,6 +166,56 @@ export function AnnaVoiceTab() {
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript]);
+
+  // ── Periodic summarization (every ANNA_SUMMARIZE_EVERY Anna turns) ───────────────
+  const maybeSummarize = useCallback(async () => {
+    annaTurnCountRef.current += 1;
+    if (
+      annaTurnCountRef.current % ANNA_SUMMARIZE_EVERY !== 0 ||
+      isSummarizingRef.current ||
+      !conversationRef.current
+    ) return;
+
+    const allTurns = completedTurnsRef.current;
+    if (allTurns.length <= ANNA_KEEP_RECENT) return;
+
+    const turnsToSummarize = allTurns.slice(0, allTurns.length - ANNA_KEEP_RECENT);
+    if (turnsToSummarize.length === 0) return;
+
+    isSummarizingRef.current = true;
+    setSummarizing(true);
+    try {
+      const { summary } = await summarizeContextMutation.mutateAsync({
+        turns: turnsToSummarize,
+      });
+      // Inject the summary into Anna's context via sendContextualUpdate
+      const conv = conversationRef.current;
+      if (conv) {
+        await (conv as any).sendContextualUpdate(
+          `[Earlier conversation summary — ${turnsToSummarize.length} turns]: ${summary}`
+        );
+      }
+      // Keep only the recent turns in local tracking
+      completedTurnsRef.current = allTurns.slice(allTurns.length - ANNA_KEEP_RECENT);
+      setSummarizeCount((c) => c + 1);
+      // Show a subtle divider in the transcript
+      setTranscript((prev) => [
+        ...prev,
+        {
+          role: "assistant" as const,
+          text: `❖ Context summarized (${turnsToSummarize.length} earlier turns compressed)`,
+          timestamp: Date.now(),
+          id: `summary-note-${Date.now()}`,
+        },
+      ]);
+      console.log(`[Anna] Summarized ${turnsToSummarize.length} turns, kept ${ANNA_KEEP_RECENT} recent`);
+    } catch (err) {
+      console.warn("[Anna] Summarization failed, skipping:", err);
+    } finally {
+      isSummarizingRef.current = false;
+      setSummarizing(false);
+    }
+  }, [summarizeContextMutation]);
 
   const cleanup = useCallback(() => {
     if (conversationRef.current) {
@@ -167,8 +231,13 @@ export function AnnaVoiceTab() {
       setSavedWords([]);
       setEndedSummary(null);
       setIsPaused(false);
+      setSummarizing(false);
+      setSummarizeCount(0);
       userStreamIdRef.current = null;
       aiStreamIdRef.current = null;
+      completedTurnsRef.current = [];
+      annaTurnCountRef.current = 0;
+      isSummarizingRef.current = false;
 
       // 1. Create session record in DB
       const { id } = await createSessionMutation.mutateAsync();
@@ -201,10 +270,17 @@ export function AnnaVoiceTab() {
         },
 
         onMessage: ({ message, source }) => {
-          // Only show Anna's speech in the live transcript
-          if (source !== "ai") return;
           const text = (message ?? "").trim();
           if (!text) return;
+
+          // Track completed turns for summarization (both user and Anna)
+          completedTurnsRef.current = [
+            ...completedTurnsRef.current,
+            { role: source === "ai" ? "assistant" : "user", text },
+          ];
+
+          // Only show Anna's speech in the live transcript
+          if (source !== "ai") return;
 
           // AI messages may arrive incrementally — update last AI line or append
           const lineId = aiStreamIdRef.current ?? `ai-${Date.now()}`;
@@ -212,13 +288,14 @@ export function AnnaVoiceTab() {
           setTranscript((prev) => {
             const existing = prev.find((l) => l.id === lineId);
             if (existing) {
-              // If the new message is longer/different, update; otherwise keep
               return prev.map((l) => l.id === lineId ? { ...l, text } : l);
             }
-            // New message from Anna — reset stream ID so next message gets a fresh line
             aiStreamIdRef.current = null;
             return [...prev, { role: "assistant", text, timestamp: Date.now(), id: lineId }];
           });
+
+          // Trigger summarization check after each Anna turn
+          maybeSummarize();
         },
 
         // ElevenLabs client tool calls (save_vocab, web_search)
@@ -327,6 +404,18 @@ export function AnnaVoiceTab() {
             <span className="flex items-center gap-1 text-xs text-amber-400 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
               Paused
+            </span>
+          )}
+          {summarizing && (
+            <span className="flex items-center gap-1 text-xs text-violet-400 font-medium animate-pulse">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Compressing…
+            </span>
+          )}
+          {!summarizing && summarizeCount > 0 && isSessionLive && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground" title={`Context summarized ${summarizeCount} time${summarizeCount > 1 ? "s" : ""}`}>
+              <Sparkles className="w-3 h-3 text-violet-400" />
+              <span className="text-violet-400">{summarizeCount}×</span>
             </span>
           )}
           <span className="text-xs text-muted-foreground bg-pink-500/10 text-pink-400 border border-pink-500/20 rounded-full px-2 py-0.5">

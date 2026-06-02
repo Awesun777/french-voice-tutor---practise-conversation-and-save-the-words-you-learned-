@@ -37,10 +37,26 @@ import {
 } from "lucide-react";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-/** Summarize and prune after this many completed turns (user + assistant = 1 turn) */
-const SUMMARIZE_EVERY = 10;
-/** Keep this many recent raw turns after pruning */
+/**
+ * Token budget for the active Realtime context.
+ * When the estimated token count of all completed turns exceeds this threshold,
+ * the oldest 50% of raw turns are summarized and deleted.
+ * 3,500 tokens ≈ system prompt (600) + ~36 turns (80 tokens each) before first prune.
+ */
+const TOKEN_BUDGET = 3500;
+/** Approximate tokens consumed by the static system prompt + tool schemas */
+const SYSTEM_PROMPT_TOKENS = 600;
+/** Always keep at least this many recent raw turns after pruning */
 const KEEP_RECENT = 10;
+
+/** Estimate token count for a string (chars ÷ 4 is the standard approximation) */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+/** Estimate total context tokens for a set of turns (includes per-turn role/metadata overhead) */
+function estimateTurnsTokens(turns: Array<{ text: string }>): number {
+  return turns.reduce((sum, t) => sum + estimateTokens(t.text) + 8, 0);
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface TranscriptLine {
@@ -196,10 +212,8 @@ export default function VoiceChatTab() {
 
   // ── Context pruning state ────────────────────────────────────────────────────
   // completedTurns: array of finalized (non-streaming) transcript lines with itemIds
-  // turnsSinceLastSummarize: count of completed turns since last summarization
-  // itemIdMap: maps our local line id → OpenAI Realtime conversation item id
+  // Token budget is checked on every completed turn; no fixed counter needed.
   const completedTurnsRef = useRef<TranscriptLine[]>([]);
-  const turnsSinceLastSummarizeRef = useRef(0);
   const isSummarizingRef = useRef(false); // prevent concurrent summarization
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -237,10 +251,7 @@ export default function VoiceChatTab() {
    *  4. Resets the counter
    */
   const maybeSummarize = useCallback(async () => {
-    turnsSinceLastSummarizeRef.current += 1;
-
     if (
-      turnsSinceLastSummarizeRef.current < SUMMARIZE_EVERY ||
       isSummarizingRef.current ||
       !dcRef.current ||
       dcRef.current.readyState !== "open"
@@ -249,9 +260,17 @@ export default function VoiceChatTab() {
     }
 
     const allTurns = completedTurnsRef.current;
-    if (allTurns.length <= KEEP_RECENT) return; // not enough turns yet
+    if (allTurns.length <= KEEP_RECENT) return; // not enough turns to consider pruning
 
-    const turnsToSummarize = allTurns.slice(0, allTurns.length - KEEP_RECENT);
+    // Check if we are over the token budget
+    const turnsTokens = estimateTurnsTokens(allTurns);
+    const totalEstimated = SYSTEM_PROMPT_TOKENS + turnsTokens;
+    if (totalEstimated <= TOKEN_BUDGET) return; // still within budget, no action needed
+
+    // Summarize the oldest 50% of turns (keep at least KEEP_RECENT recent ones)
+    const halfPoint = Math.max(0, Math.floor(allTurns.length / 2));
+    const keepFrom = Math.max(halfPoint, allTurns.length - KEEP_RECENT);
+    const turnsToSummarize = allTurns.slice(0, keepFrom);
     if (turnsToSummarize.length === 0) return;
 
     isSummarizingRef.current = true;
@@ -292,9 +311,8 @@ export default function VoiceChatTab() {
         }
       }
 
-      // 4. Update local state: remove summarized turns from completedTurnsRef
-      completedTurnsRef.current = allTurns.slice(allTurns.length - KEEP_RECENT);
-      turnsSinceLastSummarizeRef.current = 0;
+      // 4. Update local state: keep only the turns we did not summarize
+      completedTurnsRef.current = allTurns.slice(keepFrom);
 
       // Show a subtle indicator in the transcript
       setTranscript((prev) => [
@@ -541,10 +559,8 @@ export default function VoiceChatTab() {
       setEndedSummary(null);
       setSummarizeCount(0);
       streamingLineIdRef.current = null;
-      completedTurnsRef.current = [];
-      turnsSinceLastSummarizeRef.current = 0;
+       completedTurnsRef.current = [];
       isSummarizingRef.current = false;
-
       // 1. Create a session record in our DB
       const { id } = await createSessionMutation.mutateAsync();
       setSessionId(id);
@@ -998,7 +1014,6 @@ export default function VoiceChatTab() {
                 setSummarizeCount(0);
                 streamingLineIdRef.current = null;
                 completedTurnsRef.current = [];
-                turnsSinceLastSummarizeRef.current = 0;
                 isSummarizingRef.current = false;
               }}
               className="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl font-semibold transition-all"
