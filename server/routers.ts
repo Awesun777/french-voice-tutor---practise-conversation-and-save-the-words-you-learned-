@@ -817,11 +817,12 @@ The user is asking about this specific word/phrase. Answer in the context of thi
           method: 'POST',
           headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'tts-1',
+            model: 'gpt-4o-mini-tts',
             input: input.text,
-            voice: 'nova',
+            voice: 'marin',
             response_format: 'mp3',
             speed: 0.9,
+            instructions: 'You are a native French speaker. Pronounce every word with authentic French phonetics and a natural French accent. Never anglicize French words.',
           }),
         });
         if (!resp.ok) {

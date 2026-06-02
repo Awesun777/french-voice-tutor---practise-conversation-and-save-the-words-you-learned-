@@ -15,8 +15,10 @@
 import { useState, useCallback, useRef } from "react";
 import { trpc } from "./trpc";
 
-// Client-side blob URL cache — persists for the lifetime of the browser tab
-const audioCache = new Map<string, string>(); // text → blob URL
+// Client-side blob URL cache — persists for the lifetime of the browser tab.
+// Version suffix ensures stale blobs from previous voice/model changes are not reused.
+const CACHE_VERSION = 'v2-marin';
+const audioCache = new Map<string, string>(); // `${CACHE_VERSION}:${text}` → blob URL
 
 let _currentAudio: HTMLAudioElement | null = null;
 
@@ -60,8 +62,9 @@ export function usePronounce() {
       setState("loading");
       setActiveText(text);
 
-      // --- Try cache first ---
-      let blobUrl = audioCache.get(text);
+      // --- Try cache first (versioned key prevents stale blobs from old voice/model) ---
+      const cacheKey = `${CACHE_VERSION}:${text}`;
+      let blobUrl = audioCache.get(cacheKey);
 
       if (!blobUrl) {
         try {
@@ -72,7 +75,7 @@ export function usePronounce() {
           for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
           const blob = new Blob([bytes], { type: result.mimeType });
           blobUrl = URL.createObjectURL(blob);
-          audioCache.set(text, blobUrl);
+          audioCache.set(cacheKey, blobUrl);
         } catch {
           // Fallback to Web Speech API
           if (pendingRef.current === text) {
@@ -143,7 +146,7 @@ export function usePronounce() {
 
 /** Fire-and-forget convenience wrapper (no state tracking) */
 export function pronounce(text: string): void {
-  const cached = audioCache.get(text);
+  const cached = audioCache.get(`${CACHE_VERSION}:${text}`);
   if (cached) {
     stopCurrent();
     const audio = new Audio(cached);
