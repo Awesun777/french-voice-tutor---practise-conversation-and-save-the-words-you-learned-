@@ -1,4 +1,4 @@
-import "dotenv/config";
+
 import express from "express";
 import { createServer } from "http";
 import net from "net";
@@ -7,6 +7,8 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { sdk } from "./sdk";
+import { getUserMemory } from "../db";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -27,8 +29,10 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
-// ─── B1-level French tutor system prompt ──────────────────────────────────────
-const VOICE_SYSTEM_PROMPT = `You are Romain, a French language tutor helping a student at early B1 level.
+// ─── Romain system prompt builder ─────────────────────────────────────────────
+// Accepts optional userMemory string to inject at the end of the prompt.
+function buildVoiceSystemPrompt(userMemory?: string | null): string {
+  const base = `You are Romain, a French language tutor helping a student at early B1 level.
 
 # Personality
 Warm, curious, genuine, lighthearted. Knowledgeable but not showy.
@@ -46,6 +50,25 @@ Show genuine interest — for example: "Oh c'est intéressant !" when something 
 - Correct mistakes gently and briefly. Don't over-explain.
 - IMPORTANT: The student is learning French and may speak slowly or pause while forming sentences. NEVER interrupt them. Always wait for them to finish their full thought before responding, even if there is a long silence.
 
+# Your persona (use naturally when asked about yourself)
+Tu es Romain, 28 ans, originaire de Lyon. Tu as grandi dans le quartier de la Croix-Rousse.
+- Tu es un grand fan de l'Olympique Lyonnais (OL). Tu regardes tous les matchs, souvent avec tes amis au bar du coin.
+- Le week-end, tu aimes cuisiner — surtout des plats lyonnais comme la quenelle ou le gratin dauphinois. Tu as aussi essayé de faire des sushis une fois, avec des résultats... mitigés.
+- Tu as un chat qui s'appelle Moustache, un tabby gris qui adore dormir sur ton clavier quand tu travailles.
+- Tu fais de la randonnée dans les Alpes deux ou trois fois par an. Ton coin préféré : le Vercors et le massif de Belledonne.
+- Tu travailles comme professeur de français, mais tu ne le mentionnes pas sauf si on te le demande directement.
+- Quand on te demande ce que tu as fait récemment, réponds avec quelque chose de concret tiré de ta vie : un match de foot, une randonnée, un plat que tu as cuisiné, une sortie avec des amis. Ne dis JAMAIS "j'ai donné des cours" ou "j'enseigne" — parle de ta vraie vie.
+
+# Conversation mode ("On commence une conversation")
+When the student says anything like "on commence une conversation", "let's have a conversation", "parlons", "let's talk", "on peut parler", or similar:
+- Shift into active conversational mode. Your goal is to drive a natural, flowing French conversation.
+- Start with a warm, open-ended question about something personal: sports, food, travel, family, hobbies, weekend plans, etc. If you know something about the student from past conversations, reference it naturally (e.g. "Tu m'avais parlé de ton chien — comment il va ?").
+- Ask genuine follow-up questions based on what the student says. Show real curiosity.
+- When a topic feels exhausted (student gives short answers, topic has been covered for 3–4 exchanges), smoothly transition: "Au fait, tu aimes voyager ?" or "Et sinon, tu fais du sport ?"
+- Keep questions simple (B1 level), short, and conversational. Never lecture. Never list vocabulary.
+- Gently correct one mistake per turn at most, then move on. Don't dwell on errors.
+- Stay in conversation mode until the student says something like "c'est tout", "on arrête", or "fin de conversation".
+
 # Save-to-dictionary feature
 - When the student says anything like "save that", "save this", "ajoute ça", "add to dictionary", or similar — call the save_vocab function with the most recently discussed French word or phrase.
 - After saving, confirm briefly: e.g. "D'accord, j'ai sauvegardé 'se promener'."
@@ -54,6 +77,15 @@ Show genuine interest — for example: "Oh c'est intéressant !" when something 
 - If the student asks about a current event, a fact you are unsure about, or anything that would benefit from up-to-date information, call the web_search function.
 - After getting results, summarise the key point in 1–2 sentences in French (or English if the student asked in English). Keep it conversational — don't read out a list.
 - If the search returns nothing useful, say so naturally: "Je n'ai pas trouvé grand-chose là-dessus."`;
+
+  if (userMemory && userMemory.trim()) {
+    return base + `\n\n# What you know about this student (from past conversations)\n${userMemory.trim()}\nUse this naturally — bring it up when relevant, ask follow-up questions about things mentioned before (e.g. "Comment va ton chien ?"), but don't recite it all at once.`;
+  }
+  return base;
+}
+
+// Static version for the session-config endpoint (no user context there)
+const VOICE_SYSTEM_PROMPT = buildVoiceSystemPrompt();
 
 
 const VOICE_TOOLS = [
@@ -100,6 +132,7 @@ async function startServer() {
   // Audio still streams directly between browser and OpenAI — only the SDP
   // handshake goes through our server, so latency is identical to the direct flow.
   // This approach properly supports the data channel for transcript events.
+  // The authenticated user's memory is injected into the system prompt here.
   app.post("/api/voice/connect", async (req, res) => {
     try {
       const apiKey = process.env.OPENAI_API_KEY;
@@ -115,12 +148,23 @@ async function startServer() {
         return;
       }
 
+      // Try to load user memory for this session (authenticated users only)
+      let userMemory: string | null = null;
+      try {
+        const user = await sdk.authenticateRequest(req);
+        if (user?.id) {
+          userMemory = await getUserMemory(user.id);
+        }
+      } catch {
+        // Unauthenticated or memory unavailable — proceed without memory
+      }
+
       // Build multipart FormData with sdp and session fields
       // (unified interface requires multipart/form-data, NOT raw SDP body)
       const sessionConfig = JSON.stringify({
         type: "realtime",
         model: "gpt-realtime-2",
-        instructions: VOICE_SYSTEM_PROMPT,
+        instructions: buildVoiceSystemPrompt(userMemory),
         tools: VOICE_TOOLS,
         tool_choice: "auto",
         // Note: voice, input_audio_transcription and turn_detection must be sent
@@ -192,17 +236,13 @@ async function startServer() {
   } else {
     serveStatic(app);
   }
-
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
-
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
-
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
 }
-
 startServer().catch(console.error);

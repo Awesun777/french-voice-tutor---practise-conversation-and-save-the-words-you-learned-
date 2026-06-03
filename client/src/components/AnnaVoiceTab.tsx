@@ -164,6 +164,12 @@ export function AnnaVoiceTab() {
   const annaSignedUrlMutation = trpc.voice.annaSignedUrl.useMutation();
   const webSearchMutation = trpc.voice.webSearch.useMutation();
   const summarizeContextMutation = trpc.voiceSession.summarizeContext.useMutation();
+  const { data: userMemoryData } = trpc.voiceSession.getUserMemory.useQuery();
+  // Stable ref so closures inside startSession always see the latest memory value
+  const userMemoryRef = useRef<string | null>(null);
+  useEffect(() => {
+    userMemoryRef.current = userMemoryData?.memory ?? null;
+  }, [userMemoryData]);
   const { data: pastSessions = [], refetch: refetchSessions } = trpc.voiceSession.list.useQuery(
     undefined,
     { enabled: showPastSessions }
@@ -262,6 +268,17 @@ export function AnnaVoiceTab() {
 
         onConnect: () => {
           setSessionState("active");
+          // Inject persistent user memory so Anna remembers past conversations.
+          // Use the ref (not the closure-captured query data) so we always get
+          // the latest value even if the query resolved after the component rendered.
+          const memory = userMemoryRef.current;
+          if (memory && memory.trim()) {
+            setTimeout(() => {
+              conversationRef.current?.sendContextualUpdate(
+                `[What you know about this student from past conversations: ${memory.trim()} — Use this naturally, bring it up when relevant, but don't recite it all at once.]`
+              );
+            }, 1200);
+          }
         },
 
         onDisconnect: () => {
@@ -368,6 +385,7 @@ export function AnnaVoiceTab() {
         sessionId,
         transcript: persistableTranscript,
         savedWords,
+        agentName: "Anna",
       });
       setEndedSummary(summary);
       setSessionState("ended");
@@ -421,10 +439,19 @@ export function AnnaVoiceTab() {
           onConnect: () => {
             setSessionState("active");
             setIsResuming(false);
-            // Inject context so Anna remembers what was discussed
+            // Inject resume context note (recent turns)
             setTimeout(() => {
               conversationRef.current?.sendContextualUpdate(contextNote);
             }, 800);
+            // Also inject persistent user memory after the resume context note
+            const memory = userMemoryRef.current;
+            if (memory && memory.trim()) {
+              setTimeout(() => {
+                conversationRef.current?.sendContextualUpdate(
+                  `[What you know about this student from past conversations: ${memory.trim()} — Use this naturally when relevant.]`
+                );
+              }, 1400);
+            }
           },
 
           onDisconnect: () => {

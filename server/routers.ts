@@ -22,6 +22,8 @@ import {
   getVocabByUser,
   getVoiceSessions,
   getVocabStats,
+  getUserMemory,
+  updateUserMemory,
   saveQuizSession,
   saveTutorMessage,
   toggleVocabStar,
@@ -922,7 +924,7 @@ The user is asking about this specific word/phrase. Answer in the context of thi
         return { id };
       }),
 
-    // End a session: persist transcript + generate summary
+    // End a session: persist transcript + generate summary + extract user memory
     end: protectedProcedure
       .input(z.object({
         sessionId: z.number(),
@@ -936,11 +938,13 @@ The user is asking about this specific word/phrase. Answer in the context of thi
           translation: z.string(),
           kind: z.string(),
         })),
+        agentName: z.string().optional(), // "Romain" or "Anna"
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        const agentLabel = input.agentName ?? "Romain";
         // Generate a summary using the LLM
         const transcriptText = input.transcript
-          .map((m) => `${m.role === "user" ? "Student" : "Romain"}: ${m.text}`)
+          .map((m) => `${m.role === "user" ? "Student" : agentLabel}: ${m.text}`)
           .join("\n");
         let summary = "";
         try {
@@ -961,6 +965,44 @@ The user is asking about this specific word/phrase. Answer in the context of thi
         } catch {
           summary = "Session completed.";
         }
+
+        // Extract and merge user memory (fire-and-forget, don't block session save)
+        (async () => {
+          try {
+            if (input.transcript.length < 4) return; // Skip very short sessions
+            const existingMemory = await getUserMemory(ctx.user.id);
+            const memoryResp = await invokeLLM({
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a memory extractor for a French language learning app. " +
+                    "Read the conversation transcript and extract personal facts about the STUDENT only (not the tutor). " +
+                    "Focus on: hobbies, interests, pets, family members, recent life events, preferences, job, location, health, sports, travel. " +
+                    "Merge with the existing memory note if provided — update changed facts, add new ones, remove outdated ones. " +
+                    "Output a compact 3-6 sentence memory note in English, written as facts (e.g. 'The student has a dog named Max who was injured in March 2026. He likes football and supports PSG. He works as an engineer in Montreal.'). " +
+                    "If there are no meaningful personal facts in this session, return the existing memory unchanged. " +
+                    "If there is no existing memory and no facts, return an empty string.",
+                },
+                {
+                  role: "user",
+                  content: [
+                    existingMemory ? `Existing memory:\n${existingMemory}\n\n` : "",
+                    `New session transcript:\n${transcriptText.slice(0, 5000)}`,
+                  ].join(""),
+                },
+              ],
+            });
+            const raw = memoryResp.choices[0].message.content ?? "";
+            const newMemory = typeof raw === "string" ? raw.trim() : "";
+            if (newMemory) {
+              await updateUserMemory(ctx.user.id, newMemory);
+            }
+          } catch (e) {
+            console.error("[Memory] Failed to extract user memory:", e);
+          }
+        })();
+
         await endVoiceSession(
           input.sessionId,
           JSON.stringify(input.transcript),
@@ -969,6 +1011,12 @@ The user is asking about this specific word/phrase. Answer in the context of thi
         );
         return { summary };
       }),
+
+    // Get the current user's memory note (for injection at session start)
+    getUserMemory: protectedProcedure.query(async ({ ctx }) => {
+      const memory = await getUserMemory(ctx.user.id);
+      return { memory };
+    }),
 
     // Summarize older conversation turns to reduce context window size
     // Called by the client every 10 turns; returns a compact summary string

@@ -727,6 +727,7 @@ export default function VoiceChatTab() {
         sessionId,
         transcript: persistableTranscript,
         savedWords,
+        agentName: "Romain",
       });
       setEndedSummary(summary);
       setSessionState("ended");

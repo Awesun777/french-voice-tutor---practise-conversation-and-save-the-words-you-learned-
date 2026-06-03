@@ -19,6 +19,12 @@ export const users = mysqlTable("users", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  /**
+   * Persistent user memory: a compact LLM-generated note about the user's
+   * hobbies, preferences, life events, and personal details extracted from
+   * voice sessions. Injected into Romain/Anna context at session start.
+   */
+  userMemory: text("userMemory"),
 });
 
 export type User = typeof users.$inferSelect;

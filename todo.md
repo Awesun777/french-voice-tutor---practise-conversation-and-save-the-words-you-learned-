@@ -229,3 +229,14 @@
 ## Context Summarization Improvements (Round 23)
 - [x] Romain: replace fixed 10-turn trigger with token-budget estimator (3,500 token threshold); summarize oldest 50% of raw turns when budget exceeded
 - [x] Anna: add 10-turn summarization using conversation.sendContextualUpdate with the same voice.summarizeContext tRPC procedure
+
+## Conversation Experience (Round 24)
+- [x] "On commence une conversation" trigger for Romain and Anna — agent shifts to active Q&A mode asking open-ended questions, following up naturally, switching topics when exhausted
+- [x] Romain persona: rich backstory (28, Lyon, AS Lyon fan, cooks on weekends, cat named Moustache, hikes in the Alps)
+- [x] Anna persona: rich backstory (26, Paris, loves cinema, goes to the marché on Sundays, younger sister Camille) via ElevenLabs API
+- [x] DB: add userMemory TEXT column to users table (migration applied)
+- [x] DB: getUserMemory and updateUserMemory helpers in server/db.ts
+- [x] Backend: voiceSession.getUserMemory tRPC procedure — returns current user memory for session start injection
+- [x] Wire memory injection into Romain voice/connect endpoint (authenticated, appended to system prompt)
+- [x] Wire memory injection into Anna session start via sendContextualUpdate after connect
+- [x] Wire memory extraction into voiceSession.end for both Romain and Anna (fire-and-forget LLM call)

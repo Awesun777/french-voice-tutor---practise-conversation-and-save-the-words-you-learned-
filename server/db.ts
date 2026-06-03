@@ -272,6 +272,21 @@ export async function getVoiceSessions(userId: number): Promise<VoiceSession[]> 
     .orderBy(voiceSessions.startedAt);
 }
 
+// ─── User memory helpers ─────────────────────────────────────────────────────
+
+export async function getUserMemory(userId: number): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select({ userMemory: users.userMemory }).from(users).where(eq(users.id, userId)).limit(1);
+  return result.length > 0 ? (result[0].userMemory ?? null) : null;
+}
+
+export async function updateUserMemory(userId: number, memory: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ userMemory: memory }).where(eq(users.id, userId));
+}
+
 // ─── Stats helpers ─────────────────────────────────────────────────────────────
 
 export async function getVocabStats(userId: number) {
