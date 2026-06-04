@@ -40,6 +40,10 @@ import {
   Pause,
   Play,
   Sparkles,
+  Brain,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -227,6 +231,11 @@ export default function VoiceChatTab() {
   const [summarizing, setSummarizing] = useState(false);
   const [summarizeCount, setSummarizeCount] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  // Memory viewer panel state
+  const [showMemoryPanel, setShowMemoryPanel] = useState(false);
+  const [memoryEditText, setMemoryEditText] = useState("");
+  const [isEditingMemory, setIsEditingMemory] = useState(false);
+  const [memorySaving, setMemorySaving] = useState(false);
 
   // Voice settings (speed + language mix) — persisted in localStorage
   const { settings: voiceSettings, update: updateVoiceSettings } = useVoiceSettings("romain");
@@ -279,6 +288,22 @@ export default function VoiceChatTab() {
     undefined,
     { enabled: showPastSessions }
   );
+  const { data: memoryData, refetch: refetchMemory } = trpc.voiceSession.getUserMemory.useQuery(
+    undefined,
+    { enabled: showMemoryPanel }
+  );
+  const updateMemoryMutation = trpc.voiceSession.updateUserMemory.useMutation({
+    onSuccess: () => {
+      refetchMemory();
+      setIsEditingMemory(false);
+      setMemorySaving(false);
+      toast.success("Memory updated");
+    },
+    onError: () => {
+      setMemorySaving(false);
+      toast.error("Failed to save memory");
+    },
+  });
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -899,6 +924,74 @@ export default function VoiceChatTab() {
               agent="romain"
               onChange={(s) => updateVoiceSettings(s)}
             />
+
+            {/* Memory viewer panel */}
+            <div className="max-w-sm w-full">
+              <button
+                onClick={() => {
+                  setShowMemoryPanel((v) => !v);
+                  if (!showMemoryPanel) setIsEditingMemory(false);
+                }}
+                className="w-full flex items-center justify-between px-4 py-2.5 bg-card border border-border rounded-xl text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-primary" />
+                  What Romain knows about you
+                </span>
+                {showMemoryPanel ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+              </button>
+              {showMemoryPanel && (
+                <div className="mt-2 bg-card border border-border rounded-xl p-4 space-y-3">
+                  {!isEditingMemory ? (
+                    <>
+                      <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                        {memoryData?.memory || "No memory stored yet. Start a conversation and Romain will remember things about you after the session ends."}
+                      </p>
+                      {memoryData?.memory && (
+                        <button
+                          onClick={() => {
+                            setMemoryEditText(memoryData.memory ?? "");
+                            setIsEditingMemory(true);
+                          }}
+                          className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+                        >
+                          <Pencil className="w-3 h-3" /> Edit memory
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <textarea
+                        value={memoryEditText}
+                        onChange={(e) => setMemoryEditText(e.target.value)}
+                        rows={5}
+                        className="w-full text-xs bg-background border border-border rounded-lg p-2 text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+                        placeholder="Write what Romain should remember about you..."
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setMemorySaving(true);
+                            updateMemoryMutation.mutate({ memory: memoryEditText });
+                          }}
+                          disabled={memorySaving}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {memorySaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setIsEditingMemory(false)}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-muted text-muted-foreground rounded-lg hover:bg-muted/80 transition-colors"
+                        >
+                          <X className="w-3 h-3" /> Cancel
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="bg-card border border-border rounded-xl p-4 text-left max-w-sm w-full space-y-2">
               <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Tips</p>

@@ -389,6 +389,18 @@ export function AnnaVoiceTab() {
               return "Je n'ai pas pu trouver une réponse à cette question.";
             }
           },
+          start_conversation: async (): Promise<string> => {
+            // Inject a forced instruction so Anna immediately asks a personal question
+            setTimeout(() => {
+              const conv = conversationRef.current as any;
+              if (conv?.sendContextualUpdate) {
+                conv.sendContextualUpdate(
+                  "The user just triggered conversation mode. Immediately ask them one engaging personal question in French to start a natural conversation. Do not acknowledge the trigger phrase — just ask the question naturally."
+                );
+              }
+            }, 100);
+            return "starting conversation mode";
+          },
         },
       });
 
@@ -547,6 +559,17 @@ export function AnnaVoiceTab() {
               } catch {
                 return "Je n'ai pas pu trouver une réponse à cette question.";
               }
+            },
+            start_conversation: async (): Promise<string> => {
+              setTimeout(() => {
+                const conv = conversationRef.current as any;
+                if (conv?.sendContextualUpdate) {
+                  conv.sendContextualUpdate(
+                    "The user just triggered conversation mode. Immediately ask them one engaging personal question in French to start a natural conversation. Do not acknowledge the trigger phrase — just ask the question naturally."
+                  );
+                }
+              }, 100);
+              return "starting conversation mode";
             },
           },
         });

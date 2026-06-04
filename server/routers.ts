@@ -1018,6 +1018,14 @@ The user is asking about this specific word/phrase. Answer in the context of thi
       return { memory };
     }),
 
+    // Update the user's memory note directly (from the memory viewer panel)
+    updateUserMemory: protectedProcedure
+      .input(z.object({ memory: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        await updateUserMemory(ctx.user.id, input.memory.trim());
+        return { success: true };
+      }),
+
     // Summarize older conversation turns to reduce context window size
     // Called by the client every 10 turns; returns a compact summary string
     // that the client injects as a system message and deletes the old raw turns
