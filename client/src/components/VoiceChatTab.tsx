@@ -675,8 +675,13 @@ export default function VoiceChatTab() {
             voice: "marin",
             input_audio_transcription: { model: "whisper-1" },
             turn_detection: {
-              type: "server_vad",
-              threshold: 0.6,
+              type: "semantic_vad",
+              // eagerness: how quickly semantic VAD decides the user has finished
+              // "low" = waits longer before cutting off, reducing false triggers
+              eagerness: "low",
+              // threshold still applies to the underlying energy gate before
+              // semantic analysis kicks in — 0.75 filters out quiet background noise
+              threshold: 0.75,
               prefix_padding_ms: 600,
               silence_duration_ms: 1200,
             },
