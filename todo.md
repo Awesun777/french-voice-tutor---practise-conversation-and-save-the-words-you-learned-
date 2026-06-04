@@ -242,8 +242,8 @@
 - [x] Wire memory extraction into voiceSession.end for both Romain and Anna (fire-and-forget LLM call)
 
 ## Voice Settings (Round 25)
-- [ ] Shared SessionSettings component: 3-step speed slider (Slow/Normal/Fast) + 3-step language mix (All French / Mix / All English)
-- [ ] Persist settings in localStorage (romain_speed, anna_speed, language_mix)
-- [ ] Romain: apply speed and language mix via session.update instructions at session start and on change mid-session
-- [ ] Anna: apply speed via ElevenLabs voice_settings.speed at session start; apply language mix via sendContextualUpdate
-- [ ] Both: show "Say 'On commence une conversation' to start a natural conversation" hint in the UI
+- [x] Shared SessionSettings component: 3-step speed slider (Slow/Normal/Fast) + 3-step language mix (All French / Mix / All English)
+- [x] Persist settings in localStorage (romain_speed, anna_speed, language_mix)
+- [x] Romain: apply speed and language mix via session.update instructions at session start and on change mid-session
+- [x] Anna: apply speed via ElevenLabs voice_settings.speed at session start; apply language mix via sendContextualUpdate
+- [x] Both: show "Say 'On commence une conversation' to start a natural conversation" hint in the UI

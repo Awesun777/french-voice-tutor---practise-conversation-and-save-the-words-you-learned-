@@ -232,7 +232,20 @@ export default function VoiceChatTab() {
   const { settings: voiceSettings, update: updateVoiceSettings } = useVoiceSettings("romain");
   // Stable ref so session.update closures always see the latest settings
   const voiceSettingsRef = useRef(voiceSettings);
-  useEffect(() => { voiceSettingsRef.current = voiceSettings; }, [voiceSettings]);
+  useEffect(() => {
+    voiceSettingsRef.current = voiceSettings;
+    // If a session is already active, push updated instructions immediately
+    if (dcRef.current?.readyState === "open") {
+      const settingsInstructions = [
+        speedInstruction(voiceSettings.speed),
+        languageMixInstruction(voiceSettings.languageMix),
+      ].join(" ");
+      dcRef.current.send(JSON.stringify({
+        type: "session.update",
+        session: { instructions: settingsInstructions },
+      }));
+    }
+  }, [voiceSettings]);
 
   // Track the in-progress AI streaming line (delta accumulation)
   const streamingLineIdRef = useRef<string | null>(null);
