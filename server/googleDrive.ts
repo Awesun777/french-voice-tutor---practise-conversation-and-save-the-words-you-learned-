@@ -8,8 +8,35 @@
  * - exportLibraryToGoogleDoc   : create or update a Google Doc with the user's vocab library
  */
 import * as db from "./db";
-import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
+
+/**
+ * Call DeepSeek-V3 directly, bypassing the Manus built-in LLM quota.
+ */
+async function callDeepSeek(messages: { role: string; content: string }[], useJson?: boolean): Promise<string> {
+  const body: Record<string, unknown> = {
+    model: "deepseek-chat",
+    messages,
+    max_tokens: 4096,
+  };
+  if (useJson) {
+    body.response_format = { type: "json_object" };
+  }
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ENV.deepseekApiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`DeepSeek API error ${res.status}: ${err}`);
+  }
+  const data = await res.json() as { choices: { message: { content: string } }[] };
+  return data.choices[0]?.message?.content ?? "{}";
+}
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DOCS_EXPORT_URL = (docId: string) =>
@@ -160,18 +187,14 @@ function chunkText(text: string): string[] {
  */
 async function extractGroupsFromChunk(chunk: string): Promise<ExtractedGroup[]> {
   const currentYear = new Date().getFullYear();
-  const response = await invokeLLM({
-    messages: [
-      {
-        role: "system",
-        content: `You are a French vocabulary extractor that understands document structure.
+  const systemPrompt = `You are a French vocabulary extractor that understands document structure.
 
 Analyse the text and extract French vocabulary, preserving the document's own grouping structure:
 1. Look for date headers (e.g. "June 5", "2025-06-05", "5 juin 2024", "Monday June 3rd")
 2. Look for topic/theme headers (e.g. "At the restaurant", "Chapter 3", "Travel vocabulary")
 3. Group words under the section they belong to
 
-For each group return:
+Return a JSON object with a "groups" array. Each group has:
 - rawDate: the date string exactly as written in the doc (null if no date found for this group)
 - yearMissing: true if a date is present but the year is not explicitly stated
 - topicLabel: the topic/theme label if present (null if none)
@@ -182,58 +205,19 @@ Rules:
 - Only extract items that are clearly French vocabulary a learner would save
 - If the text has no grouping at all, return a single group with rawDate=null, topicLabel=null
 - Do not invent dates or topics that are not in the text
-- Current year is ${currentYear} — use this only as context, do not auto-fill missing years`,
-      },
-      {
-        role: "user",
-        content: `Extract French vocabulary groups from this text:\n\n${chunk}`,
-      },
+- Current year is ${currentYear} — use this only as context, do not auto-fill missing years
+- Always return valid JSON matching the schema exactly`;
+
+  const raw = await callDeepSeek(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Extract French vocabulary groups from this text:\n\n${chunk}` },
     ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "vocab_groups",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            groups: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  rawDate: { type: ["string", "null"] },
-                  yearMissing: { type: "boolean" },
-                  topicLabel: { type: ["string", "null"] },
-                  words: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        term: { type: "string" },
-                        translation: { type: "string" },
-                        kind: { type: "string", enum: ["word", "phrase"] },
-                      },
-                      required: ["term", "translation", "kind"],
-                      additionalProperties: false,
-                    },
-                  },
-                },
-                required: ["rawDate", "yearMissing", "topicLabel", "words"],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["groups"],
-          additionalProperties: false,
-        },
-      },
-    },
-  });
+    true
+  );
 
   try {
-    const content = response.choices[0]?.message?.content;
-    const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+    const parsed = JSON.parse(raw);
     return (parsed.groups ?? []) as ExtractedGroup[];
   } catch {
     return [];
