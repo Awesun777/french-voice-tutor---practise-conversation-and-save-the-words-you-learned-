@@ -27,7 +27,13 @@ const SCOPES = [
 ].join(" ");
 
 function getRedirectUri(req: Request): string {
-  // Use the origin header if present (proxy-aware), otherwise fall back to host
+  // In production, use the canonical public domain directly to avoid any
+  // proxy header ambiguity (redirect_uri must exactly match what's registered
+  // in Google Cloud Console).
+  if (ENV.isProduction) {
+    return "https://frenchtutor-8baqdh3x.manus.space/api/auth/google/callback";
+  }
+  // In development, derive from forwarded headers so the dev preview URL works.
   const forwarded = req.headers["x-forwarded-proto"];
   const proto = forwarded
     ? (Array.isArray(forwarded) ? forwarded[0] : forwarded.split(",")[0]).trim()
