@@ -32,6 +32,7 @@ import {
   isYearMissing,
   parseDateKey,
   preparseLines,
+  splitIntoSections,
   type ExtractionModel,
 } from "./googleDrive";
 import { getAllNonSkippedPendingImports } from "./db";
@@ -87,17 +88,32 @@ export async function runSync(
     return { found: 0 };
   }
 
+  // Sections already processed in a previous successful sync are skipped —
+  // only new/edited sections reach the LLM (and the year prompt below).
+  let knownSectionHashes: Set<string> | undefined;
+  try {
+    const parsed = settings.processedSectionHashes ? JSON.parse(settings.processedSectionHashes) : null;
+    if (Array.isArray(parsed)) knownSectionHashes = new Set(parsed as string[]);
+  } catch {
+    // malformed stored hashes — treat as no history, full reprocess
+  }
+
   // ── Ask for the year BEFORE the expensive LLM analysis ────────────────────
   // Date headers come from the cheap regex/style pre-pass, not the LLM, so
   // year-less dates are known within seconds. Asking up front means the
   // analysis runs exactly once instead of being thrown away and repeated
-  // after the user answers.
+  // after the user answers. Only sections that will actually be processed
+  // count — already-synced sections must not re-trigger the prompt forever.
   if (yearOverride === undefined) {
     const { lineContexts } = preparseLines(docLines);
+    const sections = splitIntoSections(lineContexts);
+    const pendingSections = knownSectionHashes
+      ? sections.filter((sec) => !knownSectionHashes.has(sec.hash))
+      : sections;
     const yearlessDates = Array.from(
       new Set(
-        lineContexts
-          .map((lc) => lc.dateKey)
+        pendingSections
+          .map((sec) => sec.rawDate)
           .filter((d): d is string => d !== null && isYearMissing(d))
       )
     );
@@ -119,16 +135,6 @@ export async function runSync(
 
   // Load user's preferred extraction model
   const model: ExtractionModel = (settings.extractionModel as ExtractionModel) ?? "deepseek-v4-flash";
-
-  // Sections already processed in a previous successful sync are skipped —
-  // only new/edited sections reach the LLM.
-  let knownSectionHashes: Set<string> | undefined;
-  try {
-    const parsed = settings.processedSectionHashes ? JSON.parse(settings.processedSectionHashes) : null;
-    if (Array.isArray(parsed)) knownSectionHashes = new Set(parsed as string[]);
-  } catch {
-    // malformed stored hashes — treat as no history, full reprocess
-  }
 
   // Extract with smart grouping using the user's chosen model.
   // (Year-less dates were already resolved by the pre-pass check above.)
