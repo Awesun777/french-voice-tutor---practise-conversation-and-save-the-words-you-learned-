@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractDocId, parseDateKey } from "./googleDrive";
+import { detectNumericDateFormat, extractDocId, parseDateKey } from "./googleDrive";
 
 // ── extractDocId ──────────────────────────────────────────────────────────────
 
@@ -115,5 +115,59 @@ describe("line-batching invariants", () => {
   it("parseDateKey with yearOverride overrides ambiguous dates", () => {
     expect(parseDateKey("5 juin", 2020)).toBe("2020-06-05");
     expect(parseDateKey("December 25", 2019)).toBe("2019-12-25");
+  });
+});
+
+// ── numeric date formats (DD/MM vs MM/DD) ─────────────────────────────────────
+
+describe("detectNumericDateFormat", () => {
+  it("detects day-first when a first component exceeds 12", () => {
+    expect(detectNumericDateFormat(["15/05", "des mots", "03/06"])).toBe("DM");
+    expect(detectNumericDateFormat(["20.07.2025"])).toBe("DM");
+  });
+
+  it("detects month-first when a second component exceeds 12", () => {
+    expect(detectNumericDateFormat(["05/15", "07/20/2025"])).toBe("MD");
+  });
+
+  it("majority wins when evidence conflicts", () => {
+    expect(detectNumericDateFormat(["15/05", "20/07", "05/13"])).toBe("DM");
+  });
+
+  it("defaults to US month-first with no unambiguous headers", () => {
+    expect(detectNumericDateFormat(["05/06", "rien d'autre"])).toBe("MD");
+    expect(detectNumericDateFormat([])).toBe("MD");
+  });
+});
+
+describe("parseDateKey numeric dates", () => {
+  it("parses unambiguous day-first dates regardless of format hint", () => {
+    expect(parseDateKey("15/05", 2026)).toBe("2026-05-15");
+    expect(parseDateKey("15/05", 2026, "MD")).toBe("2026-05-15");
+  });
+
+  it("parses unambiguous month-first dates regardless of format hint", () => {
+    expect(parseDateKey("05/15", 2026, "DM")).toBe("2026-05-15");
+  });
+
+  it("uses the format hint for ambiguous dates", () => {
+    expect(parseDateKey("05/06", 2026, "DM")).toBe("2026-06-05");
+    expect(parseDateKey("05/06", 2026, "MD")).toBe("2026-05-06");
+  });
+
+  it("handles explicit years, including two-digit years", () => {
+    expect(parseDateKey("15/05/2025", undefined, "DM")).toBe("2025-05-15");
+    expect(parseDateKey("15.05.25", undefined, "DM")).toBe("2025-05-15");
+    expect(parseDateKey("07/20/2025", undefined, "MD")).toBe("2025-07-20");
+  });
+
+  it("defaults missing years to the current year", () => {
+    const y = new Date().getFullYear();
+    expect(parseDateKey("15/05")).toBe(`${y}-05-15`);
+  });
+
+  it("rejects impossible dates", () => {
+    expect(parseDateKey("13/13", 2026)).toBeNull();
+    expect(parseDateKey("32/05", 2026)).toBeNull();
   });
 });

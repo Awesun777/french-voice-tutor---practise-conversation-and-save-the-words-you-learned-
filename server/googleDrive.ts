@@ -257,6 +257,8 @@ const DATE_PATTERNS = [
   /^(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche,?\s+)?\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)(?:\s+\d{4})?$/i,
   // Numeric: 05/06/2025 or 05.06.2025
   /^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/,
+  // Numeric without year: 15/05 or 15.05 (DD/MM or MM/DD — format inferred doc-wide)
+  /^\d{1,2}[./]\d{1,2}$/,
 ];
 
 function isDateHeader(line: string): boolean {
@@ -286,6 +288,33 @@ function isTopicHeader(line: string): boolean {
  */
 function isYearMissing(rawDate: string): boolean {
   return !/\d{4}/.test(rawDate);
+}
+
+// ── Numeric date format inference ─────────────────────────────────────────────
+
+export type NumericDateFormat = "DM" | "MD";
+
+const NUMERIC_DATE_RE = /^(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?$/;
+
+/**
+ * Infer whether numeric date headers in this document use international
+ * day/month order ("DM", e.g. 15/05 = May 15) or US month/day order ("MD").
+ * A component > 12 can only be a day, so any such header is unambiguous
+ * evidence — majority wins across the whole document. With no evidence
+ * either way, default to US month/day.
+ */
+export function detectNumericDateFormat(lines: string[]): NumericDateFormat {
+  let dm = 0;
+  let md = 0;
+  for (const line of lines) {
+    const m = line.trim().match(NUMERIC_DATE_RE);
+    if (!m) continue;
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
+    if (a > 12 && b <= 12) dm++;
+    else if (b > 12 && a <= 12) md++;
+  }
+  return dm > md ? "DM" : "MD";
 }
 
 // ── AI extraction ─────────────────────────────────────────────────────────────
@@ -371,12 +400,35 @@ Rules:
  * Parse a raw date string + optional year override into a YYYY-MM-DD dateKey.
  * Returns null if the date cannot be parsed.
  */
-export function parseDateKey(rawDate: string, yearOverride?: number): string | null {
+export function parseDateKey(
+  rawDate: string,
+  yearOverride?: number,
+  numericFormat: NumericDateFormat = "MD"
+): string | null {
   if (!rawDate) return null;
   const currentYear = yearOverride ?? new Date().getFullYear();
 
   // Already in YYYY-MM-DD format
   if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return rawDate;
+
+  // Numeric dates (15/05, 05/06/2025, 15.05) — JS Date parsing assumes US
+  // month/day order and rejects day-first values outright, so handle these
+  // explicitly using the document-wide inferred format. A component > 12 is
+  // a day regardless of the inferred format.
+  const num = rawDate.trim().match(NUMERIC_DATE_RE);
+  if (num) {
+    const a = parseInt(num[1], 10);
+    const b = parseInt(num[2], 10);
+    let year = num[3] ? parseInt(num[3], 10) : currentYear;
+    if (year < 100) year += 2000;
+    let day: number, month: number;
+    if (a > 12) [day, month] = [a, b];
+    else if (b > 12) [day, month] = [b, a];
+    else if (numericFormat === "DM") [day, month] = [a, b];
+    else [day, month] = [b, a];
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
 
   // Try native Date parsing with year injected if needed
   const withYear = /\d{4}/.test(rawDate) ? rawDate : `${rawDate} ${currentYear}`;
@@ -425,14 +477,16 @@ export async function extractVocabGroups(
 ): Promise<{
   groups: Array<ExtractedGroup & { dateKey: string | null }>;
   ambiguousDates: string[];
+  numericDateFormat: NumericDateFormat;
 }> {
-  if (!text.trim()) return { groups: [], ambiguousDates: [] };
+  if (!text.trim()) return { groups: [], ambiguousDates: [], numericDateFormat: "MD" };
 
   const normalize = (s: string) =>
     s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
   // ── Step 1: Split into lines ──────────────────────────────────────────────
   const allLines = text.split("\n");
+  const numericDateFormat = detectNumericDateFormat(allLines);
 
   // ── Step 2: Pre-pass — assign date/topic context per line ─────────────────
   // We track which date and topic are "active" as we walk through lines.
@@ -466,7 +520,7 @@ export async function extractVocabGroups(
     lineContexts.push({ line, dateKey: currentRawDate, topicLabel: currentTopic });
   }
 
-  if (lineContexts.length === 0) return { groups: [], ambiguousDates: [] };
+  if (lineContexts.length === 0) return { groups: [], ambiguousDates: [], numericDateFormat };
 
   // ── Step 3: Batch lines for LLM ──────────────────────────────────────────
   // We batch the actual content lines (not headers) into groups of 100–150.
@@ -551,11 +605,11 @@ export async function extractVocabGroups(
   for (const key of groupOrder) {
     const group = groupMap.get(key)!;
     if (group.words.length === 0) continue;
-    const dateKey = group.rawDate ? parseDateKey(group.rawDate) : null;
+    const dateKey = group.rawDate ? parseDateKey(group.rawDate, undefined, numericDateFormat) : null;
     processedGroups.push({ ...group, dateKey });
   }
 
-  return { groups: processedGroups, ambiguousDates };
+  return { groups: processedGroups, ambiguousDates, numericDateFormat };
 }
 
 /**

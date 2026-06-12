@@ -93,7 +93,7 @@ async function runSync(
   const model: ExtractionModel = (settings.extractionModel as ExtractionModel) ?? "deepseek-v4-flash";
 
   // Extract with smart grouping using the user's chosen model
-  const { groups, ambiguousDates } = await extractVocabGroups(
+  const { groups, ambiguousDates, numericDateFormat } = await extractVocabGroups(
     docText,
     existingTerms,
     (batch, total) => onEvent({ step: "analysing", chunk: batch, total }),
@@ -120,7 +120,7 @@ async function runSync(
     let dateKey: string;
     if (group.rawDate) {
       if (group.yearMissing && yearOverride !== undefined) {
-        dateKey = parseDateKey(group.rawDate, yearOverride) ?? today;
+        dateKey = parseDateKey(group.rawDate, yearOverride, numericDateFormat) ?? today;
       } else {
         dateKey = group.dateKey ?? today;
       }
