@@ -26,38 +26,70 @@ const GRADES = [
 interface SessionResult { total: number; again: number; good: number; easy: number; }
 const ZERO: SessionResult = { total: 0, again: 0, good: 0, easy: 0 };
 
+// In-progress flashcard session, kept at module scope so it survives tab
+// switches (the tab unmounts when another tab is active).
+interface SavedFlashcardSession {
+  choice: ReviewLaunchChoice;
+  deck: VocabEntry[];
+  idx: number;
+  flipped: boolean;
+  sessionResult: SessionResult;
+  sessionDone: boolean;
+}
+let savedFlashcardSession: SavedFlashcardSession | null = null;
+
 export default function FlashcardTab({ reviewTarget }: { reviewTarget?: { dateKey: string } | null }) {
   const utils = trpc.useUtils();
   const { speak, state: pronounceState, activeText } = usePronounce();
 
+  // Restore an in-progress session on remount — unless we arrived via a
+  // "Review these" CTA (reviewTarget), which always starts fresh for that date.
+  const restore = !reviewTarget ? savedFlashcardSession : null;
+
   // null = show the launch screen; set = an active session.
-  const [choice, setChoice] = useState<ReviewLaunchChoice | null>(null);
-
-  const { data: queue = [] } = trpc.review.getQueue.useQuery(choice ?? { mode: "due" }, { enabled: !!choice });
-
-  const [deck, setDeck] = useState<VocabEntry[]>([]);
-  const [idx, setIdx] = useState(0);
-  const [flipped, setFlipped] = useState(false);
+  const [choice, setChoice] = useState<ReviewLaunchChoice | null>(restore?.choice ?? null);
+  const [deck, setDeck] = useState<VocabEntry[]>(restore?.deck ?? []);
+  const [idx, setIdx] = useState(restore?.idx ?? 0);
+  const [flipped, setFlipped] = useState(restore?.flipped ?? false);
+  const [starting, setStarting] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcription, setTranscription] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
-  const [sessionDone, setSessionDone] = useState(false);
-  const [sessionResult, setSessionResult] = useState<SessionResult>(ZERO);
+  const [sessionDone, setSessionDone] = useState(restore?.sessionDone ?? false);
+  const [sessionResult, setSessionResult] = useState<SessionResult>(restore?.sessionResult ?? ZERO);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
-  // Build the deck once the queue for a started session resolves.
+  // Persist the live session so switching tabs and back resumes where you left off.
   useEffect(() => {
-    if (!choice) return;
-    setDeck([...queue] as VocabEntry[]);
-    setIdx(0);
-    setFlipped(false);
-    setSessionDone(false);
-    setSessionResult(ZERO);
-    setTranscription(null);
-  }, [choice, queue]);
+    if (choice && deck.length > 0 && !sessionDone) {
+      savedFlashcardSession = { choice, deck, idx, flipped, sessionResult, sessionDone };
+    } else if (!choice || sessionDone) {
+      savedFlashcardSession = null;
+    }
+  }, [choice, deck, idx, flipped, sessionResult, sessionDone]);
+
+  // Launch a session: fetch the chosen queue, then build the deck. Fetching
+  // imperatively (vs a reactive query) keeps a restored deck from being clobbered.
+  const startSession = async (c: ReviewLaunchChoice) => {
+    setStarting(true);
+    try {
+      const words = (await utils.review.getQueue.fetch(c)) as VocabEntry[];
+      setChoice(c);
+      setDeck([...words]);
+      setIdx(0);
+      setFlipped(false);
+      setSessionDone(false);
+      setSessionResult(ZERO);
+      setTranscription(null);
+    } catch {
+      toast.error("Couldn't load words to review");
+    } finally {
+      setStarting(false);
+    }
+  };
 
   const submitReviewMutation = trpc.review.submitReview.useMutation({
     onSuccess: () => {
@@ -168,12 +200,18 @@ export default function FlashcardTab({ reviewTarget }: { reviewTarget?: { dateKe
   if (!choice) {
     return (
       <div className="flex flex-col h-full">
-        <ReviewLaunch
-          key={reviewTarget?.dateKey ?? "none"}
-          kind="flashcards"
-          initialDateKey={reviewTarget?.dateKey}
-          onStart={setChoice}
-        />
+        {starting ? (
+          <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+          </div>
+        ) : (
+          <ReviewLaunch
+            key={reviewTarget?.dateKey ?? "none"}
+            kind="flashcards"
+            initialDateKey={reviewTarget?.dateKey}
+            onStart={startSession}
+          />
+        )}
       </div>
     );
   }
@@ -311,17 +349,14 @@ export default function FlashcardTab({ reviewTarget }: { reviewTarget?: { dateKe
               <ChevronLeft className="w-5 h-5" />
             </button>
 
-            {flipped ? (
-              <div className="flex-1 flex gap-1.5">
-                {GRADES.map(({ grade, label, color }) => (
-                  <button key={grade} onClick={() => handleGrade(grade)} className={cn("flex-1 py-2.5 rounded-xl text-xs font-semibold border transition-colors", color)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="flex-1 text-center text-xs text-muted-foreground py-2.5">Tap the card to reveal, then rate it</div>
-            )}
+            {/* 3 grade buttons — always visible, rate from recall before or after flip */}
+            <div className="flex-1 flex gap-1.5">
+              {GRADES.map(({ grade, label, color }) => (
+                <button key={grade} onClick={() => handleGrade(grade)} className={cn("flex-1 py-2.5 rounded-xl text-xs font-semibold border transition-colors", color)}>
+                  {label}
+                </button>
+              ))}
+            </div>
 
             <button onClick={handleNext} disabled={idx === deck.length - 1} className="p-3 rounded-xl bg-card border border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors">
               <ChevronRight className="w-5 h-5" />
