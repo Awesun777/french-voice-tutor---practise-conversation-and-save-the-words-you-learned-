@@ -40,7 +40,13 @@ let savedFlashcardSession: SavedFlashcardSession | null = null;
 
 export default function FlashcardTab({ reviewTarget }: { reviewTarget?: { dateKey: string } | null }) {
   const utils = trpc.useUtils();
-  const { speak, state: pronounceState, activeText } = usePronounce();
+  const { speak, preload, state: pronounceState, activeText } = usePronounce();
+  // Refs so the autoplay effect can call the latest speak/preload without
+  // depending on them (they change identity as pronounce state updates).
+  const speakRef = useRef(speak);
+  const preloadRef = useRef(preload);
+  speakRef.current = speak;
+  preloadRef.current = preload;
 
   // Restore an in-progress session on remount — unless we arrived via a
   // "Review these" CTA (reviewTarget), which always starts fresh for that date.
@@ -70,6 +76,18 @@ export default function FlashcardTab({ reviewTarget }: { reviewTarget?: { dateKe
       savedFlashcardSession = null;
     }
   }, [choice, deck, idx, flipped, sessionResult, sessionDone]);
+
+  // When a new card appears, auto-play its pronunciation and pre-warm the next
+  // card's audio so it's instant. Keyed on the card id so flipping doesn't replay.
+  const currentCardId = deck[idx]?.id;
+  useEffect(() => {
+    const cur = deck[idx];
+    if (!cur || sessionDone) return;
+    speakRef.current(cur.term);
+    const next = deck[idx + 1];
+    if (next) preloadRef.current(next.term);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCardId, sessionDone]);
 
   // Launch a session: fetch the chosen queue, then build the deck. Fetching
   // imperatively (vs a reactive query) keeps a restored deck from being clobbered.

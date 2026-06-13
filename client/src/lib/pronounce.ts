@@ -47,6 +47,27 @@ export function usePronounce() {
 
   const ttsMutation = trpc.voice.tts.useMutation();
 
+  // Fetch + cache the audio for `text` WITHOUT playing it, so a later speak()
+  // is instant. Used to warm the next flashcard while the current one shows.
+  const preload = useCallback(
+    async (text: string) => {
+      if (!text) return;
+      const cacheKey = `${CACHE_VERSION}:${text}`;
+      if (audioCache.has(cacheKey)) return;
+      try {
+        const result = await ttsMutation.mutateAsync({ text });
+        const binary = atob(result.base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: result.mimeType });
+        if (!audioCache.has(cacheKey)) audioCache.set(cacheKey, URL.createObjectURL(blob));
+      } catch {
+        // Preload is best-effort — ignore failures (speak() will retry / fall back).
+      }
+    },
+    [ttsMutation]
+  );
+
   const speak = useCallback(
     async (text: string) => {
       // Toggle off if already speaking this text
@@ -141,7 +162,7 @@ export function usePronounce() {
     [activeText, state, ttsMutation]
   );
 
-  return { speak, state, activeText };
+  return { speak, preload, state, activeText };
 }
 
 /** Fire-and-forget convenience wrapper (no state tracking) */
